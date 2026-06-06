@@ -165,7 +165,9 @@ namespace CustomELSSirens
                         KillAllSounds();
                     }
 
-                    if (Game.IsPaused || Game.IsLoading)
+                    bool isPaused = Game.IsPaused || Game.IsLoading || NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>();
+
+                    if (isPaused)
                     {
                         activeSiren.SetVolume(0f);
                         activeHorn.SetVolume(0f);
@@ -176,9 +178,8 @@ namespace CustomELSSirens
                     }
                     else
                     {
-                        bool isMenuOpen = (sirenMenu != null && sirenMenu.Visible);
-                        bool isPauseMenuOpen = NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>();
-                        bool shouldMuteAll = Game.IsPaused || Game.IsLoading || isMenuOpen || isPauseMenuOpen;
+                        bool isMenuOpen = sirenMenu != null && sirenMenu.Visible;
+                        bool shouldMuteAll = isMenuOpen;
 
                         Vector3 camPos = NativeFunction.Natives.GET_GAMEPLAY_CAM_COORD<Vector3>();
                         Vector3 camRot = NativeFunction.Natives.GET_GAMEPLAY_CAM_ROT<Vector3>(2);
