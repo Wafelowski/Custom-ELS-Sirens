@@ -1,0 +1,315 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Xml;
+using Rage;
+using RAGENativeUI;
+using RAGENativeUI.Elements;
+
+namespace CustomELSSirens
+{
+    public static class MenuManager
+    {
+        public static MenuPool MenuPool;
+        public static UIMenu MainMenu;
+        public static UIMenu SettingsMenu;
+
+        public static List<string> AvailableWavs = new List<string>();
+
+        private static UIMenuListItem modeItem, tone1Item, tone2Item, tone3Item, tone4Item, hornItem, manualItem;
+        private static UIMenuNumericScrollerItem<float> tone1Vol, tone2Vol, tone3Vol, tone4Vol, hornVol, manualVol;
+        private static UIMenuNumericScrollerItem<float> masterVolumeItem;
+
+        private static UIMenuCheckboxItem aiCutoffItem;
+        private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
+        private static UIMenuNumericScrollerItem<int> maxAiUnitsItem;
+        private static UIMenuNumericScrollerItem<float> falloffItem;
+        private static UIMenuNumericScrollerItem<float> maxDistanceItem;
+        private static UIMenuNumericScrollerItem<float> reverbIntensityItem;
+        private static UIMenuItem reloadWavsItem;
+        private static UIMenuItem reloadConfigsItem;
+
+        public static void ToggleCustomSirenMenu()
+        {
+            if (MainMenu == null) return;
+            UpdateMenuSelections();
+            MainMenu.Visible = !MainMenu.Visible;
+            if (!MainMenu.Visible && SettingsMenu != null) SettingsMenu.Visible = false;
+            Game.Console.Print("[CustomSirens] Configuration menu toggled via console command.");
+        }
+
+        public static void Process()
+        {
+            MenuPool?.ProcessMenus();
+
+            if (Game.IsKeyDownRightNow(PluginConfig.MenuKey))
+            {
+                if (!MainMenu.Visible && (SettingsMenu == null || !SettingsMenu.Visible))
+                {
+                    UpdateMenuSelections();
+                    MainMenu.Visible = true;
+                }
+            }
+        }
+
+        public static void SetupMenu()
+        {
+            if (!Directory.Exists(PluginConfig.WavFolder)) Directory.CreateDirectory(PluginConfig.WavFolder);
+            if (!Directory.Exists(PluginConfig.ProfilesFolder)) Directory.CreateDirectory(PluginConfig.ProfilesFolder);
+
+            LoadWavFiles();
+
+            MenuPool = new MenuPool();
+            MainMenu = new UIMenu("~r~Custom ~p~ELS ~b~Sirens", "Main Menu");
+            MenuPool.Add(MainMenu);
+
+            List<dynamic> wavsDynamic = AvailableWavs.Cast<dynamic>().ToList();
+
+            // Main Menu Setup
+            modeItem = new UIMenuListItem("~h~~y~Profile Mode", new List<dynamic> { "Global Default", "Vehicle Specific" }, 0);
+            masterVolumeItem = new UIMenuNumericScrollerItem<float>("~h~~y~Master Volume", "Volume Percentage for the global Volume", 0f, 100f, 5f);
+            masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
+
+            tone1Item = new UIMenuListItem("~h~~b~Tone 1", wavsDynamic, 0);
+            tone1Vol = new UIMenuNumericScrollerItem<float>("~o~Tone 1 Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            tone1Vol.Value = PluginConfig.Tone1Vol * 100f;
+
+            tone2Item = new UIMenuListItem("~h~~b~Tone 2", wavsDynamic, 0);
+            tone2Vol = new UIMenuNumericScrollerItem<float>("~o~Tone 2 Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            tone2Vol.Value = PluginConfig.Tone2Vol * 100f;
+
+            tone3Item = new UIMenuListItem("~h~~b~Tone 3", wavsDynamic, 0);
+            tone3Vol = new UIMenuNumericScrollerItem<float>("~o~Tone 3 Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            tone3Vol.Value = PluginConfig.Tone3Vol * 100f;
+
+            tone4Item = new UIMenuListItem("~h~~b~Tone 4", wavsDynamic, 0);
+            tone4Vol = new UIMenuNumericScrollerItem<float>("~o~Tone 4 Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            tone4Vol.Value = PluginConfig.Tone4Vol * 100f;
+
+            hornItem = new UIMenuListItem("~h~~b~Airhorn", wavsDynamic, 0);
+            hornVol = new UIMenuNumericScrollerItem<float>("~o~Horn Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            hornVol.Value = PluginConfig.HornVol * 100f;
+
+            manualItem = new UIMenuListItem("~h~~b~Manual Siren", wavsDynamic, 0);
+            manualVol = new UIMenuNumericScrollerItem<float>("~o~Manual Volume", "Volume Percentage for the specific Siren", 0f, 100f, 5f);
+            manualVol.Value = PluginConfig.ManualVol * 100f;
+
+            UIMenuItem saveItem = new UIMenuItem("~h~~g~Save Profile", "~g~Saves the selected tones and volumes.");
+
+            MainMenu.AddItem(modeItem);
+            MainMenu.AddItem(masterVolumeItem);
+            MainMenu.AddItem(tone1Item); MainMenu.AddItem(tone1Vol);
+            MainMenu.AddItem(tone2Item); MainMenu.AddItem(tone2Vol);
+            MainMenu.AddItem(tone3Item); MainMenu.AddItem(tone3Vol);
+            MainMenu.AddItem(tone4Item); MainMenu.AddItem(tone4Vol);
+            MainMenu.AddItem(hornItem); MainMenu.AddItem(hornVol);
+            MainMenu.AddItem(manualItem); MainMenu.AddItem(manualVol);
+            MainMenu.AddItem(saveItem);
+
+            SettingsMenu = MenuPool.AddSubMenu(MainMenu, "~h~~y~Misc Settings");
+
+            reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
+            reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
+
+            maxDistanceItem = new UIMenuNumericScrollerItem<float>("~c~Max Hearing Distance", "How far sirens can be heard.", 50f, 1000f, 10f);
+            maxDistanceItem.Value = PluginConfig.MaxDistance;
+
+            aiCutoffItem = new UIMenuCheckboxItem("~c~Automatic Siren Cutoff", PluginConfig.AutomaticAiSirenCutoff, "Cuts off the siren when the driver gets out of the vehicle.");
+            aiScanIntervalItem = new UIMenuNumericScrollerItem<int>("~c~AI Scan Frequency", "Time in ms the Plugin should scan for AI vehicles (Lower = more demanding).", 100, 5000, 50);
+            aiScanIntervalItem.Value = PluginConfig.AiScanInterval;
+
+            maxAiUnitsItem = new UIMenuNumericScrollerItem<int>("~c~Max Affected AI Units", "How many AI units can be affected simultaneously.", 1, 50, 1);
+            maxAiUnitsItem.Value = PluginConfig.MaxAiUnits;
+
+            falloffItem = new UIMenuNumericScrollerItem<float>("~c~Siren Falloff Curve", "Adjusts how quickly the sound fades over distance. (Default: 3.0)", 0.5f, 10.0f, 0.5f);
+            falloffItem.Value = PluginConfig.FalloffExponent;
+
+            reloadConfigsItem = new UIMenuItem("~q~Reload Configurations", "~q~Reloads settings and keybinds from Config.ini and ELS.ini.");
+            reloadWavsItem = new UIMenuItem("~q~Reload WAV Files", "~q~Rescans the WAVs directory to update available audio files.");
+            UIMenuItem patchELSItem = new UIMenuItem("~r~Kill ELS Sounds (Patch VCFs)", "~r~Mutes the Sirens in your ELS VCFs (Creates a backup of your current VCFs before patching).~n~Game Restart required!");
+
+            SettingsMenu.AddItem(reverbIntensityItem);
+            SettingsMenu.AddItem(maxDistanceItem);
+            SettingsMenu.AddItem(aiCutoffItem);
+            SettingsMenu.AddItem(aiScanIntervalItem);
+            SettingsMenu.AddItem(maxAiUnitsItem);
+            SettingsMenu.AddItem(falloffItem);
+            SettingsMenu.AddItem(reloadConfigsItem);
+            SettingsMenu.AddItem(reloadWavsItem);
+            SettingsMenu.AddItem(patchELSItem);
+
+            // Bind Events 
+            MainMenu.OnListChange += (s, item, idx) => { if (item == modeItem) UpdateMenuSelections(); };
+
+            masterVolumeItem.IndexChanged += (s, o, n) => { PluginConfig.MasterVolume = masterVolumeItem.Value / 100f; PluginConfig.SaveConfig(); };
+            tone1Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone1Vol = tone1Vol.Value / 100f; PluginConfig.SaveConfig(); };
+            tone2Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone2Vol = tone2Vol.Value / 100f; PluginConfig.SaveConfig(); };
+            tone3Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone3Vol = tone3Vol.Value / 100f; PluginConfig.SaveConfig(); };
+            tone4Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone4Vol = tone4Vol.Value / 100f; PluginConfig.SaveConfig(); };
+            hornVol.IndexChanged += (s, o, n) => { PluginConfig.HornVol = hornVol.Value / 100f; PluginConfig.SaveConfig(); };
+            manualVol.IndexChanged += (s, o, n) => { PluginConfig.ManualVol = manualVol.Value / 100f; PluginConfig.SaveConfig(); };
+
+            MainMenu.OnItemSelect += (s, item, idx) =>
+            {
+                if (item == saveItem)
+                {
+                    SaveToneFilesToProfile();
+                    SirenManager.ClearProfileCache();
+                    SirenManager.CacheVehicleSirens();
+                }
+            };
+
+            SettingsMenu.OnCheckboxChange += (s, item, checkedState) =>
+            {
+                if (item == aiCutoffItem)
+                {
+                    PluginConfig.AutomaticAiSirenCutoff = checkedState;
+                    PluginConfig.SaveConfig();
+                }
+            };
+
+            reverbIntensityItem.IndexChanged += (s, o, n) => { PluginConfig.ReverbIntensity = reverbIntensityItem.Value / 100f; PluginConfig.SaveConfig(); };
+            maxDistanceItem.IndexChanged += (s, o, n) => { PluginConfig.MaxDistance = maxDistanceItem.Value; PluginConfig.SaveConfig(); };
+            aiScanIntervalItem.IndexChanged += (s, o, n) => { PluginConfig.AiScanInterval = aiScanIntervalItem.Value; PluginConfig.SaveConfig(); };
+            maxAiUnitsItem.IndexChanged += (s, o, n) => { PluginConfig.MaxAiUnits = maxAiUnitsItem.Value; PluginConfig.SaveConfig(); };
+            falloffItem.IndexChanged += (s, o, n) => { PluginConfig.FalloffExponent = falloffItem.Value; PluginConfig.SaveConfig(); };
+
+            SettingsMenu.OnItemSelect += (s, item, idx) =>
+            {
+                if (item == patchELSItem) PatchELSVCFs();
+                if (item == reloadConfigsItem)
+                {
+                    PluginConfig.Load();
+
+                    masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
+                    aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
+                    aiScanIntervalItem.Value = PluginConfig.AiScanInterval;
+                    maxAiUnitsItem.Value = PluginConfig.MaxAiUnits;
+                    falloffItem.Value = PluginConfig.FalloffExponent;
+                    maxDistanceItem.Value = PluginConfig.MaxDistance;
+                    reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
+
+                    tone1Vol.Value = PluginConfig.Tone1Vol * 100f;
+                    tone2Vol.Value = PluginConfig.Tone2Vol * 100f;
+                    tone3Vol.Value = PluginConfig.Tone3Vol * 100f;
+                    tone4Vol.Value = PluginConfig.Tone4Vol * 100f;
+                    hornVol.Value = PluginConfig.HornVol * 100f;
+                    manualVol.Value = PluginConfig.ManualVol * 100f;
+
+                    Game.DisplayNotification("~g~Configurations & Keybinds Reloaded Successfully!");
+                }
+                if (item == reloadWavsItem)
+                {
+                    LoadWavFiles();
+
+                    List<dynamic> updatedWavs = AvailableWavs.Cast<dynamic>().ToList();
+                    tone1Item.Items = updatedWavs;
+                    tone2Item.Items = updatedWavs;
+                    tone3Item.Items = updatedWavs;
+                    tone4Item.Items = updatedWavs;
+                    hornItem.Items = updatedWavs;
+                    manualItem.Items = updatedWavs;
+
+                    UpdateMenuSelections();
+                    Game.DisplayNotification("~g~WAV Files Reloaded Successfully!");
+                }
+            };
+        }
+
+        private static void PatchELSVCFs()
+        {
+            string backupFolder = Path.Combine("ELS", "Original VCF Backups");
+            if (!Directory.Exists("ELS")) return;
+            if (!Directory.Exists(backupFolder)) Directory.CreateDirectory(backupFolder);
+
+            string[] files = Directory.GetFiles("ELS", "*.xml", SearchOption.TopDirectoryOnly);
+            int count = 0;
+
+            foreach (string file in files)
+            {
+                try
+                {
+                    string fileName = Path.GetFileName(file);
+                    string backupPath = Path.Combine(backupFolder, fileName);
+
+                    if (!File.Exists(backupPath)) File.Copy(file, backupPath);
+
+                    XmlDocument doc = new XmlDocument();
+                    doc.Load(file);
+                    bool modified = false;
+
+                    XmlNode soundsNode = doc.SelectSingleNode("//SOUNDS");
+                    if (soundsNode != null)
+                    {
+                        foreach (XmlNode node in soundsNode.ChildNodes)
+                        {
+                            if (node.Attributes?["AllowUse"] != null &&
+                                node.Attributes["AllowUse"].Value.Equals("true", StringComparison.OrdinalIgnoreCase))
+                            {
+                                node.Attributes["AllowUse"].Value = "false";
+                                modified = true;
+                            }
+                        }
+                    }
+
+                    if (modified)
+                    {
+                        doc.Save(file);
+                        count++;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Game.Console.Print($"[CustomSirens] Failed to patch/backup {file}: {ex.Message}");
+                }
+            }
+
+            if (count > 0)
+                Game.DisplayNotification($"~g~Disabled ELS Sounds in {count} VCFs! Backups created in 'Original VCF Backups'.");
+            else
+                Game.DisplayNotification("~y~No VCFs required patching (or they were already patched).");
+        }
+
+        private static void LoadWavFiles()
+        {
+            AvailableWavs.Clear();
+            AvailableWavs.Add("None");
+            if (Directory.Exists(PluginConfig.WavFolder))
+                AvailableWavs.AddRange(Directory.GetFiles(PluginConfig.WavFolder, "*.wav").Select(Path.GetFileName));
+        }
+
+        private static void UpdateMenuSelections()
+        {
+            string targetIni = modeItem.Index == 0 ? "Global.ini" : $"{SirenManager.CurrentVehicleModel}.ini";
+            InitializationFile ini = new InitializationFile($@"{PluginConfig.ProfilesFolder}{targetIni}");
+
+            void SetIndex(UIMenuListItem listItem, string toneName)
+            {
+                string saved = ini.ReadString("Sirens", toneName, "None");
+                int idx = AvailableWavs.IndexOf(saved);
+                listItem.Index = idx >= 0 ? idx : 0;
+            }
+
+            SetIndex(tone1Item, "Tone1"); SetIndex(tone2Item, "Tone2");
+            SetIndex(tone3Item, "Tone3"); SetIndex(tone4Item, "Tone4");
+            SetIndex(hornItem, "Horn"); SetIndex(manualItem, "Manual");
+        }
+
+        private static void SaveToneFilesToProfile()
+        {
+            string targetIni = modeItem.Index == 0 ? "Global.ini" : $"{SirenManager.CurrentVehicleModel}.ini";
+            InitializationFile ini = new InitializationFile($@"{PluginConfig.ProfilesFolder}{targetIni}");
+            if (!ini.Exists()) ini.Create();
+
+            ini.Write("Sirens", "Tone1", AvailableWavs[tone1Item.Index]);
+            ini.Write("Sirens", "Tone2", AvailableWavs[tone2Item.Index]);
+            ini.Write("Sirens", "Tone3", AvailableWavs[tone3Item.Index]);
+            ini.Write("Sirens", "Tone4", AvailableWavs[tone4Item.Index]);
+            ini.Write("Sirens", "Horn", AvailableWavs[hornItem.Index]);
+            ini.Write("Sirens", "Manual", AvailableWavs[manualItem.Index]);
+
+            Game.DisplayNotification($"~g~Saved tone selections to {targetIni}!");
+        }
+    }
+}
