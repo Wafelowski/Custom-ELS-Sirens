@@ -18,6 +18,7 @@ namespace CustomELSSirens
 
         public static void Main()
         {
+            UpdateManager.CheckForUpdates();
             PluginConfig.Load();
             MenuManager.SetupMenu();
             Game.DisplayNotification($"~b~Custom Sirens~w~ initialized. Press ~y~{PluginConfig.MenuKey}~w~ or use console for the menu.");
