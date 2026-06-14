@@ -215,10 +215,16 @@ namespace CustomELSSirens
 
         private static string GetVehicleModelName(Vehicle veh)
         {
+            if (veh == null || !veh.IsValid()) return "UNKNOWN";
+
             string name = veh.Model.Name;
-            if (string.IsNullOrEmpty(name) || name.StartsWith("0x"))
-                name = NativeFunction.Natives.GET_DISPLAY_NAME_FROM_VEHICLE_MODEL<string>(veh.Model.Hash);
-            return name.ToLower();
+
+            if (string.IsNullOrEmpty(name) || name.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+            {
+                name = $"0x{veh.Model.Hash:X8}";
+            }
+
+            return name.ToUpper();
         }
 
         private static void HandleInputs(Vehicle veh, bool isLightsOn)
