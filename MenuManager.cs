@@ -223,13 +223,15 @@ namespace CustomELSSirens
             if (!Directory.Exists("ELS")) return;
             if (!Directory.Exists(backupFolder)) Directory.CreateDirectory(backupFolder);
 
-            string[] files = Directory.GetFiles("ELS", "*.xml", SearchOption.TopDirectoryOnly);
+            string[] files = Directory.GetFiles("ELS", "*.xml", SearchOption.AllDirectories);
             int count = 0;
 
             foreach (string file in files)
             {
                 try
                 {
+                    if (file.IndexOf("Original VCF Backups", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+
                     string fileName = Path.GetFileName(file);
                     string backupPath = Path.Combine(backupFolder, fileName);
 

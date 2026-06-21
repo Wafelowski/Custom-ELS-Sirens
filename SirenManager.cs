@@ -577,8 +577,9 @@ namespace CustomELSSirens
                 }
 
                 bool hasNoDriver = aiVeh.Driver == null || !aiVeh.Driver.IsValid();
+                bool isDriverDead = !hasNoDriver && !aiVeh.Driver.IsAlive;
 
-                if (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff)
+                if (isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff))
                 {
                     if (aiVeh.IsSirenOn) aiVeh.IsSirenOn = false;
                     aiPlayer.Stop();
