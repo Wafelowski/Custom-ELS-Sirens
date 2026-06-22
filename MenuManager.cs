@@ -21,6 +21,7 @@ namespace CustomELSSirens
         private static UIMenuNumericScrollerItem<float> tone1Vol, tone2Vol, tone3Vol, tone4Vol, hornVol, manualVol;
         private static UIMenuNumericScrollerItem<float> masterVolumeItem;
 
+        private static UIMenuCheckboxItem controllerSupportItem;
         private static UIMenuCheckboxItem aiCutoffItem;
         private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
         private static UIMenuNumericScrollerItem<int> maxAiUnitsItem;
@@ -107,7 +108,10 @@ namespace CustomELSSirens
             MainMenu.AddItem(manualItem); MainMenu.AddItem(manualVol);
             MainMenu.AddItem(saveItem);
 
+            // Submenu Setup
             SettingsMenu = MenuPool.AddSubMenu(MainMenu, "~h~~y~Misc Settings");
+
+            controllerSupportItem = new UIMenuCheckboxItem("~c~Controller Support", PluginConfig.EnableControllerSupport, "Enables Controller inputs for toggling sirens (DPad Down, DPad Right, B).");
 
             reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
             reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
@@ -129,6 +133,7 @@ namespace CustomELSSirens
             reloadWavsItem = new UIMenuItem("~q~Reload WAV Files", "~q~Rescans the WAVs directory to update available audio files.");
             UIMenuItem patchELSItem = new UIMenuItem("~r~Kill ELS Sounds (Patch VCFs)", "~r~Mutes the Sirens in your ELS VCFs (Creates a backup of your current VCFs before patching).~n~Game Restart required!");
 
+            SettingsMenu.AddItem(controllerSupportItem);
             SettingsMenu.AddItem(reverbIntensityItem);
             SettingsMenu.AddItem(maxDistanceItem);
             SettingsMenu.AddItem(aiCutoffItem);
@@ -167,6 +172,11 @@ namespace CustomELSSirens
                     PluginConfig.AutomaticAiSirenCutoff = checkedState;
                     PluginConfig.SaveConfig();
                 }
+                if (item == controllerSupportItem)
+                {
+                    PluginConfig.EnableControllerSupport = checkedState;
+                    PluginConfig.SaveConfig();
+                }
             };
 
             reverbIntensityItem.IndexChanged += (s, o, n) => { PluginConfig.ReverbIntensity = reverbIntensityItem.Value / 100f; PluginConfig.SaveConfig(); };
@@ -182,6 +192,7 @@ namespace CustomELSSirens
                 {
                     PluginConfig.Load();
 
+                    controllerSupportItem.Checked = PluginConfig.EnableControllerSupport;
                     masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
                     aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
                     aiScanIntervalItem.Value = PluginConfig.AiScanInterval;
