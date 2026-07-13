@@ -11,6 +11,7 @@ namespace CustomELSSirens
         public static string ProfilesFolder = BaseFolder + @"Profiles\";
         public static string ConfigFile = BaseFolder + "Config.ini";
 
+        // Keyboard Binds
         public static Keys MenuKey = Keys.F10;
         public static Keys Sound_Manul = (Keys)82;
         public static Keys Snd_SrnTon1 = (Keys)49;
@@ -21,12 +22,14 @@ namespace CustomELSSirens
         public static Keys Snd_SrnTonX = (Keys)54;
         public static Keys Snd_SrnPnic = (Keys)55;
 
-        // Controller Support Configuration
+        // Controller Support
         public static bool EnableControllerSupport = true;
         public static ControllerButtons Controller_Manul = ControllerButtons.B;
         public static ControllerButtons Controller_SrnToggle = ControllerButtons.DPadDown;
         public static ControllerButtons Controller_SrnTonX = ControllerButtons.DPadRight;
 
+        // Background Settings
+        public static bool HornInterruptsSiren = true;
         public static float MasterVolume = 0.5f;
         public static bool AutomaticAiSirenCutoff = true;
         public static int AiScanInterval = 500;
@@ -54,9 +57,7 @@ namespace CustomELSSirens
                 ini.Create();
                 ini.Write("Settings", "MenuKey", MenuKey.ToString());
                 ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
-                ini.Write("Settings", "Controller_Manul", Controller_Manul.ToString());
-                ini.Write("Settings", "Controller_SrnToggle", Controller_SrnToggle.ToString());
-                ini.Write("Settings", "Controller_SrnTonX", Controller_SrnTonX.ToString());
+                ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
                 ini.Write("Settings", "MasterVolume", MasterVolume.ToString());
                 ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
                 ini.Write("Settings", "AiScanInterval", AiScanInterval.ToString());
@@ -77,10 +78,7 @@ namespace CustomELSSirens
             {
                 MenuKey = ini.ReadEnum("Settings", "MenuKey", MenuKey);
                 EnableControllerSupport = ini.ReadBoolean("Settings", "EnableControllerSupport", EnableControllerSupport);
-                Controller_Manul = ini.ReadEnum("Settings", "Controller_Manul", Controller_Manul);
-                Controller_SrnToggle = ini.ReadEnum("Settings", "Controller_SrnToggle", Controller_SrnToggle);
-                Controller_SrnTonX = ini.ReadEnum("Settings", "Controller_SrnTonX", Controller_SrnTonX);
-
+                HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
                 MasterVolume = ini.ReadSingle("Settings", "MasterVolume", MasterVolume);
                 AutomaticAiSirenCutoff = ini.ReadBoolean("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff);
                 AiScanInterval = ini.ReadInt32("Settings", "AiScanInterval", AiScanInterval);
@@ -133,10 +131,7 @@ namespace CustomELSSirens
             ini.Write("SirenVolumes", "ManualVol", ManualVol.ToString());
 
             ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
-            ini.Write("Settings", "Controller_Manul", Controller_Manul.ToString());
-            ini.Write("Settings", "Controller_SrnToggle", Controller_SrnToggle.ToString());
-            ini.Write("Settings", "Controller_SrnTonX", Controller_SrnTonX.ToString());
-
+            ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
             ini.Write("Settings", "MasterVolume", MasterVolume.ToString());
             ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
             ini.Write("Settings", "AiScanInterval", AiScanInterval.ToString());

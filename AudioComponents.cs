@@ -22,10 +22,13 @@ namespace CustomELSSirens
         private float perSirenVolume = 1f;
 
         public bool IsPlaying { get; private set; }
+        public bool IsFadingOut { get; private set; }
+        private uint fadeStart = 0;
+        private const uint FADE_DURATION = 600; // 0.6 seconds smooth tail-off
 
         public void Play(CachedSound cached, bool loop, float volumeMultiplier)
         {
-            Stop();
+            Stop(true); // Drop instantly before starting a new track from scratch
             perSirenVolume = volumeMultiplier;
             if (cached == null) return;
 
@@ -44,44 +47,43 @@ namespace CustomELSSirens
                 waveOut = new WaveOutEvent { DesiredLatency = 80, NumberOfBuffers = 2 };
                 waveOut.Init(volProvider);
                 waveOut.Play();
+
                 IsPlaying = true;
+                IsFadingOut = false;
             }
             catch { }
         }
 
         public void Stop(bool dropInstantly = false)
         {
-            IsPlaying = false;
-            if (waveOut == null) return;
+            if (!IsPlaying) return;
 
             if (dropInstantly)
             {
-                waveOut.Stop();
-                waveOut.Dispose();
+                IsPlaying = false;
+                IsFadingOut = false;
+
+                try
+                {
+                    waveOut?.Stop();
+                    waveOut?.Dispose();
+                }
+                catch { }
+
+                waveOut = null;
+                cachedProvider = null;
+                panProvider = null;
+                reverbProvider = null;
+                volProvider = null;
             }
             else
             {
-                if (cachedProvider != null) cachedProvider.IsMuted = true;
-
-                var oldWave = waveOut;
-
-                GameFiber.StartNew(() =>
+                if (!IsFadingOut)
                 {
-                    GameFiber.Sleep(2000);
-                    try
-                    {
-                        oldWave?.Stop();
-                        oldWave?.Dispose();
-                    }
-                    catch { }
-                });
+                    IsFadingOut = true;
+                    fadeStart = Game.GameTime;
+                }
             }
-
-            waveOut = null;
-            cachedProvider = null;
-            panProvider = null;
-            reverbProvider = null;
-            volProvider = null;
         }
 
         public void Dispose() => Stop(true);
@@ -94,7 +96,13 @@ namespace CustomELSSirens
 
         public void Update3D(Vehicle veh, Vector3 camPos, Vector3 camRot, bool forceMute = false)
         {
-            if (!IsPlaying || volProvider == null || panProvider == null || !veh.IsValid()) return;
+            if (!IsPlaying || volProvider == null || panProvider == null) return;
+
+            if (!veh.IsValid())
+            {
+                Stop(true);
+                return;
+            }
 
             if (forceMute)
             {
@@ -112,8 +120,22 @@ namespace CustomELSSirens
                 targetVolume = 0f;
             else
             {
-                float t = (distance - PluginConfig.MinDistance) / (PluginConfig.MaxDistance - PluginConfig.MinDistance);
-                targetVolume = (float)Math.Pow(1.0 - t, PluginConfig.FalloffExponent);
+                float tDist = (distance - PluginConfig.MinDistance) / (PluginConfig.MaxDistance - PluginConfig.MinDistance);
+                targetVolume = (float)Math.Pow(1.0 - tDist, PluginConfig.FalloffExponent);
+            }
+
+            // Fading out multiplier with an exponential decay curve for a realistic, smooth stop
+            float fadeMultiplier = 1f;
+            if (IsFadingOut)
+            {
+                uint elapsed = Game.GameTime - fadeStart;
+                if (elapsed >= FADE_DURATION)
+                {
+                    Stop(true); // Fade complete, kill memory resources completely
+                    return;
+                }
+                float t = (float)elapsed / FADE_DURATION;
+                fadeMultiplier = (1f - t) * (1f - t);
             }
 
             if (reverbProvider != null)
@@ -123,13 +145,8 @@ namespace CustomELSSirens
                 reverbProvider.Intensity = PluginConfig.ReverbIntensity;
             }
 
-            float cabinDampening = 1f;
-            Ped player = Game.LocalPlayer.Character;
-            if (player != null && player.IsInAnyVehicle(false))
-                cabinDampening = player.CurrentVehicle == veh ? 0.45f : 0.20f;
-
             volProvider.Volume = MathHelper.Clamp(
-                targetVolume * PluginConfig.MasterVolume * perSirenVolume * cabinDampening, 0f, 1f);
+                targetVolume * PluginConfig.MasterVolume * perSirenVolume * fadeMultiplier, 0f, 1f);
 
             Vector2 dirToSound = new Vector2(sirenPos.X - camPos.X, sirenPos.Y - camPos.Y);
             if (dirToSound.Length() > 0.01f) dirToSound.Normalize();
