@@ -22,6 +22,7 @@ namespace CustomELSSirens
         private static UIMenuNumericScrollerItem<float> masterVolumeItem;
 
         private static UIMenuCheckboxItem controllerSupportItem;
+        private static UIMenuCheckboxItem lightRestrictionItem;
         private static UIMenuCheckboxItem hornInterruptItem;
         private static UIMenuCheckboxItem aiCutoffItem;
         private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
@@ -70,6 +71,10 @@ namespace CustomELSSirens
 
             // Main Menu Setup
             modeItem = new UIMenuListItem("~h~~y~Profile Mode", new List<dynamic> { "Global Default", "Vehicle Specific" }, 0);
+
+            // Moved to Main Menu so it behaves as a profile-specific save/load setting!
+            lightRestrictionItem = new UIMenuCheckboxItem("~c~Siren Light Restriction", PluginConfig.SirenLightRestriction, "If enabled, emergency lights must be active to trigger custom sirens. Disable this if your addon vehicle's lights aren't being detected.");
+
             masterVolumeItem = new UIMenuNumericScrollerItem<float>("~h~~y~Master Volume", "Volume Percentage for the global Volume", 0f, 100f, 5f);
             masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
 
@@ -100,6 +105,7 @@ namespace CustomELSSirens
             UIMenuItem saveItem = new UIMenuItem("~h~~g~Save Profile", "~g~Saves the selected tones and volumes.");
 
             MainMenu.AddItem(modeItem);
+            MainMenu.AddItem(lightRestrictionItem);
             MainMenu.AddItem(masterVolumeItem);
             MainMenu.AddItem(tone1Item); MainMenu.AddItem(tone1Vol);
             MainMenu.AddItem(tone2Item); MainMenu.AddItem(tone2Vol);
@@ -217,6 +223,9 @@ namespace CustomELSSirens
                     hornVol.Value = PluginConfig.HornVol * 100f;
                     manualVol.Value = PluginConfig.ManualVol * 100f;
 
+                    // Fetch updated UI states
+                    UpdateMenuSelections();
+
                     Game.DisplayNotification("~g~Configurations & Keybinds Reloaded Successfully!");
                 }
                 if (item == reloadWavsItem)
@@ -316,6 +325,18 @@ namespace CustomELSSirens
             SetIndex(tone1Item, "Tone1"); SetIndex(tone2Item, "Tone2");
             SetIndex(tone3Item, "Tone3"); SetIndex(tone4Item, "Tone4");
             SetIndex(hornItem, "Horn"); SetIndex(manualItem, "Manual");
+
+            // Update the light restriction checkbox based on the currently selected profile mode!
+            if (modeItem.Index == 0)
+            {
+                // Global Mode fallback
+                lightRestrictionItem.Checked = ini.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
+            }
+            else
+            {
+                // Vehicle Specific Mode
+                lightRestrictionItem.Checked = ini.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
+            }
         }
 
         private static void SaveToneFilesToProfile()
@@ -330,6 +351,16 @@ namespace CustomELSSirens
             ini.Write("Sirens", "Tone4", AvailableWavs[tone4Item.Index]);
             ini.Write("Sirens", "Horn", AvailableWavs[hornItem.Index]);
             ini.Write("Sirens", "Manual", AvailableWavs[manualItem.Index]);
+
+            // Save the light restriction bypass setting directly to this specific profile!
+            ini.Write("Settings", "SirenLightRestriction", lightRestrictionItem.Checked.ToString());
+
+            // If we are saving to Global, also update the global runtime fallback variable
+            if (modeItem.Index == 0)
+            {
+                PluginConfig.SirenLightRestriction = lightRestrictionItem.Checked;
+                PluginConfig.SaveConfig();
+            }
 
             Game.DisplayNotification($"~g~Saved tone selections to {targetIni}!");
         }

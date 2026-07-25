@@ -29,6 +29,7 @@ namespace CustomELSSirens
         public static ControllerButtons Controller_SrnTonX = ControllerButtons.DPadRight;
 
         // Background Settings
+        public static bool SirenLightRestriction = true;
         public static bool HornInterruptsSiren = true;
         public static float MasterVolume = 0.5f;
         public static bool AutomaticAiSirenCutoff = true;
@@ -51,13 +52,12 @@ namespace CustomELSSirens
         {
             if (!Directory.Exists(BaseFolder)) Directory.CreateDirectory(BaseFolder);
 
+            LoadELSKeybinds();
+
             InitializationFile ini = new InitializationFile(ConfigFile);
             if (!ini.Exists())
             {
                 ini.Create();
-                ini.Write("Settings", "MenuKey", MenuKey.ToString());
-                ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
-                ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
                 ini.Write("Settings", "MasterVolume", MasterVolume.ToString());
                 ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
                 ini.Write("Settings", "AiScanInterval", AiScanInterval.ToString());
@@ -66,6 +66,23 @@ namespace CustomELSSirens
                 ini.Write("Settings", "MinDistance", MinDistance.ToString());
                 ini.Write("Settings", "FalloffExponent", FalloffExponent.ToString());
                 ini.Write("Settings", "ReverbIntensity", ReverbIntensity.ToString());
+                ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
+                ini.Write("Settings", "SirenLightRestriction", SirenLightRestriction.ToString());
+                ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
+
+                ini.Write("Keybinds", "MenuKey", MenuKey.ToString());
+                ini.Write("Keybinds", "Sound_Manul", Sound_Manul.ToString());
+                ini.Write("Keybinds", "Snd_SrnTon1", Snd_SrnTon1.ToString());
+                ini.Write("Keybinds", "Snd_SrnTon2", Snd_SrnTon2.ToString());
+                ini.Write("Keybinds", "Snd_SrnTon3", Snd_SrnTon3.ToString());
+                ini.Write("Keybinds", "Snd_SrnTon4", Snd_SrnTon4.ToString());
+                ini.Write("Keybinds", "Snd_SrnScan", Snd_SrnScan.ToString());
+                ini.Write("Keybinds", "Snd_SrnTonX", Snd_SrnTonX.ToString());
+                ini.Write("Keybinds", "Snd_SrnPnic", Snd_SrnPnic.ToString());
+
+                ini.Write("Keybinds", "Controller_Manul", Controller_Manul.ToString());
+                ini.Write("Keybinds", "Controller_SrnToggle", Controller_SrnToggle.ToString());
+                ini.Write("Keybinds", "Controller_SrnTonX", Controller_SrnTonX.ToString());
 
                 ini.Write("SirenVolumes", "Tone1Vol", Tone1Vol.ToString());
                 ini.Write("SirenVolumes", "Tone2Vol", Tone2Vol.ToString());
@@ -76,9 +93,6 @@ namespace CustomELSSirens
             }
             else
             {
-                MenuKey = ini.ReadEnum("Settings", "MenuKey", MenuKey);
-                EnableControllerSupport = ini.ReadBoolean("Settings", "EnableControllerSupport", EnableControllerSupport);
-                HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
                 MasterVolume = ini.ReadSingle("Settings", "MasterVolume", MasterVolume);
                 AutomaticAiSirenCutoff = ini.ReadBoolean("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff);
                 AiScanInterval = ini.ReadInt32("Settings", "AiScanInterval", AiScanInterval);
@@ -87,6 +101,23 @@ namespace CustomELSSirens
                 MinDistance = ini.ReadSingle("Settings", "MinDistance", MinDistance);
                 FalloffExponent = ini.ReadSingle("Settings", "FalloffExponent", FalloffExponent);
                 ReverbIntensity = ini.ReadSingle("Settings", "ReverbIntensity", ReverbIntensity);
+                EnableControllerSupport = ini.ReadBoolean("Settings", "EnableControllerSupport", EnableControllerSupport);
+                SirenLightRestriction = ini.ReadBoolean("Settings", "SirenLightRestriction", SirenLightRestriction);
+                HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
+
+                MenuKey = ini.ReadEnum("Keybinds", "MenuKey", ini.ReadEnum("Settings", "MenuKey", MenuKey));
+                Sound_Manul = ini.ReadEnum("Keybinds", "Sound_Manul", Sound_Manul);
+                Snd_SrnTon1 = ini.ReadEnum("Keybinds", "Snd_SrnTon1", Snd_SrnTon1);
+                Snd_SrnTon2 = ini.ReadEnum("Keybinds", "Snd_SrnTon2", Snd_SrnTon2);
+                Snd_SrnTon3 = ini.ReadEnum("Keybinds", "Snd_SrnTon3", Snd_SrnTon3);
+                Snd_SrnTon4 = ini.ReadEnum("Keybinds", "Snd_SrnTon4", Snd_SrnTon4);
+                Snd_SrnScan = ini.ReadEnum("Keybinds", "Snd_SrnScan", Snd_SrnScan);
+                Snd_SrnTonX = ini.ReadEnum("Keybinds", "Snd_SrnTonX", Snd_SrnTonX);
+                Snd_SrnPnic = ini.ReadEnum("Keybinds", "Snd_SrnPnic", Snd_SrnPnic);
+
+                Controller_Manul = ini.ReadEnum("Keybinds", "Controller_Manul", ini.ReadEnum("Settings", "Controller_Manul", Controller_Manul));
+                Controller_SrnToggle = ini.ReadEnum("Keybinds", "Controller_SrnToggle", ini.ReadEnum("Settings", "Controller_SrnToggle", Controller_SrnToggle));
+                Controller_SrnTonX = ini.ReadEnum("Keybinds", "Controller_SrnTonX", ini.ReadEnum("Settings", "Controller_SrnTonX", Controller_SrnTonX));
 
                 Tone1Vol = ini.ReadSingle("SirenVolumes", "Tone1Vol", Tone1Vol);
                 Tone2Vol = ini.ReadSingle("SirenVolumes", "Tone2Vol", Tone2Vol);
@@ -95,8 +126,6 @@ namespace CustomELSSirens
                 HornVol = ini.ReadSingle("SirenVolumes", "HornVol", HornVol);
                 ManualVol = ini.ReadSingle("SirenVolumes", "ManualVol", ManualVol);
             }
-
-            LoadELSKeybinds();
         }
 
         private static void LoadELSKeybinds()
@@ -131,6 +160,7 @@ namespace CustomELSSirens
             ini.Write("SirenVolumes", "ManualVol", ManualVol.ToString());
 
             ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
+            ini.Write("Settings", "SirenLightRestriction", SirenLightRestriction.ToString());
             ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
             ini.Write("Settings", "MasterVolume", MasterVolume.ToString());
             ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
@@ -139,6 +169,20 @@ namespace CustomELSSirens
             ini.Write("Settings", "FalloffExponent", FalloffExponent.ToString());
             ini.Write("Settings", "MaxDistance", MaxDistance.ToString());
             ini.Write("Settings", "ReverbIntensity", ReverbIntensity.ToString());
+
+            ini.Write("Keybinds", "MenuKey", MenuKey.ToString());
+            ini.Write("Keybinds", "Sound_Manul", Sound_Manul.ToString());
+            ini.Write("Keybinds", "Snd_SrnTon1", Snd_SrnTon1.ToString());
+            ini.Write("Keybinds", "Snd_SrnTon2", Snd_SrnTon2.ToString());
+            ini.Write("Keybinds", "Snd_SrnTon3", Snd_SrnTon3.ToString());
+            ini.Write("Keybinds", "Snd_SrnTon4", Snd_SrnTon4.ToString());
+            ini.Write("Keybinds", "Snd_SrnScan", Snd_SrnScan.ToString());
+            ini.Write("Keybinds", "Snd_SrnTonX", Snd_SrnTonX.ToString());
+            ini.Write("Keybinds", "Snd_SrnPnic", Snd_SrnPnic.ToString());
+
+            ini.Write("Keybinds", "Controller_Manul", Controller_Manul.ToString());
+            ini.Write("Keybinds", "Controller_SrnToggle", Controller_SrnToggle.ToString());
+            ini.Write("Keybinds", "Controller_SrnTonX", Controller_SrnTonX.ToString());
         }
     }
 }

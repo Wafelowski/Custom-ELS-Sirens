@@ -72,44 +72,57 @@ namespace CustomELSSirens
                 string hornProfile = GetProfileSiren(CurrentVehicleModel, "Horn");
                 bool hasCustomHorn = !string.IsNullOrEmpty(hornProfile) && hornProfile != "None";
 
-                if (currentVehicle.HasSiren && hasCustomHorn)
-                {
-                    Game.DisableControlAction(0, GameControl.VehicleHorn, true);
-                }
+                bool isEmergency = currentVehicle.HasSiren ||
+                                   currentVehicle.Class == VehicleClass.Emergency ||
+                                   IsElsVehicle(CurrentVehicleModel) ||
+                                   vehicleProfileExists ||
+                                   IsEmergencyModelName(CurrentVehicleModel);
 
-                bool isLightsOn = IsVehicleLightsOn(currentVehicle);
-
-                if (inVehicle)
+                if (isEmergency)
                 {
-                    HandleInputs(currentVehicle, isLightsOn);
+                    if (currentVehicle.HasSiren && hasCustomHorn)
+                    {
+                        Game.DisableControlAction(0, GameControl.VehicleHorn, true);
+                    }
+
+                    bool isLightsOn = IsVehicleLightsOn(currentVehicle);
+
+                    if (inVehicle)
+                    {
+                        HandleInputs(currentVehicle, isLightsOn);
+                    }
+                    else
+                    {
+                        if (activeHorn.IsPlaying) activeHorn.Stop(false);
+                        if (activeManual.IsPlaying) activeManual.Stop(false);
+
+                        wasHorn = false;
+                        wasManul = false;
+
+                        bool hasNoDriver = currentVehicle.Driver == null || !currentVehicle.Driver.IsValid();
+                        bool isDriverDead = !hasNoDriver && !currentVehicle.Driver.IsAlive;
+
+                        if (isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff))
+                        {
+                            if (activeToneIndex != 0)
+                            {
+                                activeToneIndex = 0;
+                                isAutoScanActive = false;
+                                activeSiren.Stop(false, true);
+                            }
+                        }
+                    }
+
+                    if (!isLightsOn && activeToneIndex != 0)
+                    {
+                        activeToneIndex = 0;
+                        isAutoScanActive = false;
+                        activeSiren.Stop(false);
+                    }
                 }
                 else
                 {
-                    if (activeHorn.IsPlaying) activeHorn.Stop(true);
-                    if (activeManual.IsPlaying) activeManual.Stop(true);
-
-                    wasHorn = false;
-                    wasManul = false;
-
-                    bool hasNoDriver = currentVehicle.Driver == null || !currentVehicle.Driver.IsValid();
-                    bool isDriverDead = !hasNoDriver && !currentVehicle.Driver.IsAlive;
-
-                    if (isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff))
-                    {
-                        if (activeToneIndex != 0)
-                        {
-                            activeToneIndex = 0;
-                            isAutoScanActive = false;
-                            activeSiren.Stop();
-                        }
-                    }
-                }
-
-                if (!isLightsOn && activeToneIndex != 0)
-                {
-                    activeToneIndex = 0;
-                    isAutoScanActive = false;
-                    activeSiren.Stop(true);
+                    StopAllLocalSounds(true);
                 }
             }
             else
@@ -134,7 +147,6 @@ namespace CustomELSSirens
 
                 if (currentVehicle != null && currentVehicle.IsValid() && currentVehicle.IsAlive)
                 {
-                    // Track button presses to interrupt, regardless of if it's vanilla or custom audio!
                     bool isHornActive = wasHorn || (activeHorn.IsPlaying && !activeHorn.IsFadingOut);
                     bool isManualActive = wasManul || (activeManual.IsPlaying && !activeManual.IsFadingOut);
 
@@ -153,6 +165,29 @@ namespace CustomELSSirens
                 nextAiScanTime = Game.GameTime + (uint)PluginConfig.AiScanInterval;
                 ScanForAiVehicles();
             }
+        }
+
+        private static bool IsEmergencyModelName(string modelName)
+        {
+            if (string.IsNullOrEmpty(modelName)) return false;
+            string lower = modelName.ToLower();
+            return lower.Contains("police") ||
+                   lower.Contains("sheriff") ||
+                   lower.Contains("fbi") ||
+                   lower.Contains("fhp") ||
+                   lower.Contains("dsp") ||
+                   lower.Contains("lspd") ||
+                   lower.Contains("bcso") ||
+                   lower.Contains("sast") ||
+                   lower.Contains("sapr") ||
+                   lower.Contains("swat") ||
+                   lower.Contains("unmarked") ||
+                   lower.Contains("fire") ||
+                   lower.Contains("amb") ||
+                   lower.Contains("ems") ||
+                   lower.Contains("ranger") ||
+                   lower.Contains("medic") ||
+                   lower.Contains("rescue");
         }
 
         private static void ResetInputs()
@@ -198,6 +233,16 @@ namespace CustomELSSirens
             activeToneIndex = 0;
             isAutoScanActive = false;
             currentVehicle = null;
+            ResetInputs();
+        }
+
+        private static void StopAllLocalSounds(bool dropInstantly = false)
+        {
+            if (activeSiren.IsPlaying) activeSiren.Stop(dropInstantly);
+            if (activeHorn.IsPlaying) activeHorn.Stop(dropInstantly);
+            if (activeManual.IsPlaying) activeManual.Stop(dropInstantly);
+            activeToneIndex = 0;
+            isAutoScanActive = false;
             ResetInputs();
         }
 
@@ -278,6 +323,27 @@ namespace CustomELSSirens
             return _elsModelsCache.Contains(modelName);
         }
 
+        private static bool GetVehicleLightRestriction(string modelName)
+        {
+            if (string.IsNullOrEmpty(modelName)) return PluginConfig.SirenLightRestriction;
+
+            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
+            if (File.Exists(vehIni))
+            {
+                InitializationFile vIni = new InitializationFile(vehIni);
+                return vIni.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
+            }
+
+            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
+            if (File.Exists(globalIniPath))
+            {
+                InitializationFile gIni = new InitializationFile(globalIniPath);
+                return gIni.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
+            }
+
+            return PluginConfig.SirenLightRestriction;
+        }
+
         private static void HandleInputs(Vehicle veh, bool isLightsOn)
         {
             CheckToneKey(PluginConfig.Snd_SrnTon1, ref was1, 1, isLightsOn);
@@ -327,7 +393,7 @@ namespace CustomELSSirens
             }
             else if (!isManulPressed && wasManul)
             {
-                activeManual.Stop(true);
+                activeManual.Stop(false);
             }
             wasManul = isManulPressed;
 
@@ -342,7 +408,7 @@ namespace CustomELSSirens
                     {
                         isAutoScanActive = false;
                         activeToneIndex = 0;
-                        activeSiren.Stop(true);
+                        activeSiren.Stop(false);
                     }
                     else
                     {
@@ -406,11 +472,10 @@ namespace CustomELSSirens
             }
             else if (!isHornPressed && wasHorn)
             {
-                activeHorn.Stop(true);
+                activeHorn.Stop(false);
             }
             wasHorn = isHornPressed;
 
-            // Updated to track physical button presses for interruptions, so vanilla horns interrupt too!
             bool isHornActive = wasHorn || (activeHorn.IsPlaying && !activeHorn.IsFadingOut);
             bool isManualActive = wasManul || (activeManual.IsPlaying && !activeManual.IsFadingOut);
             bool isInterruptedNow = isManualActive || (PluginConfig.HornInterruptsSiren && isHornActive);
@@ -476,7 +541,7 @@ namespace CustomELSSirens
                         else
                         {
                             activeToneIndex = 0;
-                            activeSiren.Stop(true);
+                            activeSiren.Stop(false);
                         }
                     }
                     else
@@ -567,12 +632,20 @@ namespace CustomELSSirens
         {
             if (veh == null || !veh.IsValid()) return false;
 
+            string modelName = GetVehicleModelName(veh);
+            bool restrictionActive = GetVehicleLightRestriction(modelName);
+
+            if (!restrictionActive && veh == currentVehicle) return true;
+
+            if (veh.IsSirenOn) return true;
+
             if (NativeFunction.Natives.DECOR_EXIST_ON<bool>(veh, "ELS_lightstage"))
             {
                 int stage = NativeFunction.Natives.DECOR_GET_INT<int>(veh, "ELS_lightstage");
-                return stage >= requiredSirenStage;
+                if (stage >= 2) return true;
             }
-            return veh.IsSirenOn;
+
+            return false;
         }
 
         private static void ScanForAiVehicles()
@@ -670,7 +743,7 @@ namespace CustomELSSirens
 
                     if (!isCode3)
                     {
-                        aiPlayer.Stop(true);
+                        aiPlayer.Stop(false);
                     }
                     else
                     {

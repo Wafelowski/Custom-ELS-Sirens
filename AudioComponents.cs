@@ -23,12 +23,17 @@ namespace CustomELSSirens
 
         public bool IsPlaying { get; private set; }
         public bool IsFadingOut { get; private set; }
+
         private uint fadeStart = 0;
-        private const uint FADE_DURATION = 600; // 0.6 seconds smooth tail-off
+        private bool isExitFade = false;
+
+        private const uint STANDARD_FADE_DURATION = 100; // 0.1 seconds smooth tail-off
+        private const uint EXIT_HOLD_DURATION = 300;     // 0.3 seconds full volume hold after exit
+        private const uint EXIT_FADE_DURATION = 150;     // 0.15 seconds quick tail-off
 
         public void Play(CachedSound cached, bool loop, float volumeMultiplier)
         {
-            Stop(true); // Drop instantly before starting a new track from scratch
+            Stop(true);
             perSirenVolume = volumeMultiplier;
             if (cached == null) return;
 
@@ -54,7 +59,7 @@ namespace CustomELSSirens
             catch { }
         }
 
-        public void Stop(bool dropInstantly = false)
+        public void Stop(bool dropInstantly = false, bool exitFade = false)
         {
             if (!IsPlaying) return;
 
@@ -82,6 +87,7 @@ namespace CustomELSSirens
                 {
                     IsFadingOut = true;
                     fadeStart = Game.GameTime;
+                    isExitFade = exitFade;
                 }
             }
         }
@@ -124,18 +130,39 @@ namespace CustomELSSirens
                 targetVolume = (float)Math.Pow(1.0 - tDist, PluginConfig.FalloffExponent);
             }
 
-            // Fading out multiplier with an exponential decay curve for a realistic, smooth stop
             float fadeMultiplier = 1f;
             if (IsFadingOut)
             {
                 uint elapsed = Game.GameTime - fadeStart;
-                if (elapsed >= FADE_DURATION)
+
+                if (isExitFade)
                 {
-                    Stop(true); // Fade complete, kill memory resources completely
-                    return;
+                    if (elapsed < EXIT_HOLD_DURATION)
+                    {
+                        fadeMultiplier = 1f;
+                    }
+                    else
+                    {
+                        uint fadeElapsed = elapsed - EXIT_HOLD_DURATION;
+                        if (fadeElapsed >= EXIT_FADE_DURATION)
+                        {
+                            Stop(true);
+                            return;
+                        }
+                        float t = (float)fadeElapsed / EXIT_FADE_DURATION;
+                        fadeMultiplier = (1f - t) * (1f - t);
+                    }
                 }
-                float t = (float)elapsed / FADE_DURATION;
-                fadeMultiplier = (1f - t) * (1f - t);
+                else
+                {
+                    if (elapsed >= STANDARD_FADE_DURATION)
+                    {
+                        Stop(true);
+                        return;
+                    }
+                    float t = (float)elapsed / STANDARD_FADE_DURATION;
+                    fadeMultiplier = (1f - t) * (1f - t);
+                }
             }
 
             if (reverbProvider != null)
