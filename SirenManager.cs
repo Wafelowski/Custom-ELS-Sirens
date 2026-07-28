@@ -34,6 +34,11 @@ namespace CustomELSSirens
         private static uint nextAiScanTime = 0;
         private static readonly Random rnd = new Random();
 
+        private static int currentTrackedStage = 0;
+        private static bool wasLstKey = false;
+
+        private static readonly Dictionary<string, float> _volumeCache = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+
         private static readonly HashSet<string> _elsModelsCache = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static bool _elsModelsCached = false;
 
@@ -194,6 +199,9 @@ namespace CustomELSSirens
         {
             was1 = was2 = was3 = was4 = wasHorn = wasManul = wasScan = wasTonX = wasPnic = false;
             _wasSirenInterrupted = false;
+
+            currentTrackedStage = 0;
+            wasLstKey = false;
         }
 
         public static void DropVolumes()
@@ -220,6 +228,7 @@ namespace CustomELSSirens
 
             cachedSirens.Clear();
             _profileCache.Clear();
+            _volumeCache.Clear();
             _vehicleScratch.Clear();
 
             Game.Console.Print("[CustomSirens] Unloaded – all audio resources released.");
@@ -344,8 +353,109 @@ namespace CustomELSSirens
             return PluginConfig.SirenLightRestriction;
         }
 
+        private static bool GetVehicleLightStageTracking(string modelName)
+        {
+            if (string.IsNullOrEmpty(modelName)) return PluginConfig.EnableLightStageTracking;
+
+            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
+            if (File.Exists(vehIni))
+            {
+                InitializationFile vIni = new InitializationFile(vehIni);
+                return vIni.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking);
+            }
+
+            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
+            if (File.Exists(globalIniPath))
+            {
+                InitializationFile gIni = new InitializationFile(globalIniPath);
+                return gIni.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking);
+            }
+
+            return PluginConfig.EnableLightStageTracking;
+        }
+
+        private static int GetVehicleCustomStageAmount(string modelName)
+        {
+            if (string.IsNullOrEmpty(modelName)) return PluginConfig.CustomLightStageAmount;
+
+            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
+            if (File.Exists(vehIni))
+            {
+                InitializationFile vIni = new InitializationFile(vehIni);
+                return vIni.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount);
+            }
+
+            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
+            if (File.Exists(globalIniPath))
+            {
+                InitializationFile gIni = new InitializationFile(globalIniPath);
+                return gIni.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount);
+            }
+
+            return PluginConfig.CustomLightStageAmount;
+        }
+
+        public static float GetVehicleVolume(string modelName, string key, float defaultVal)
+        {
+            if (string.IsNullOrEmpty(modelName)) return defaultVal;
+
+            string cacheKey = modelName + "|" + key;
+            if (_volumeCache.TryGetValue(cacheKey, out float cachedVol))
+            {
+                return cachedVol;
+            }
+
+            float result = defaultVal;
+            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
+
+            if (File.Exists(vehIni))
+            {
+                InitializationFile vIni = new InitializationFile(vehIni);
+                result = vIni.ReadSingle("SirenVolumes", key, defaultVal);
+            }
+            else
+            {
+                string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
+                if (File.Exists(globalIniPath))
+                {
+                    InitializationFile gIni = new InitializationFile(globalIniPath);
+                    result = gIni.ReadSingle("SirenVolumes", key, defaultVal);
+                }
+            }
+
+            _volumeCache[cacheKey] = result;
+            return result;
+        }
+
+        public static void UpdateCachedVolume(string modelName, string key, float value)
+        {
+            if (string.IsNullOrEmpty(modelName)) return;
+            string cacheKey = modelName + "|" + key;
+            _volumeCache[cacheKey] = value;
+        }
+
         private static void HandleInputs(Vehicle veh, bool isLightsOn)
         {
+            bool enableTracking = GetVehicleLightStageTracking(CurrentVehicleModel);
+            if (enableTracking)
+            {
+                int maxStages = GetVehicleCustomStageAmount(CurrentVehicleModel);
+
+                bool isLstKey = Game.IsKeyDownRightNow(PluginConfig.Toggle_Lsts) ||
+                                 (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(ControllerButtons.DPadLeft));
+
+                if (isLstKey && !wasLstKey)
+                {
+                    currentTrackedStage++;
+                    if (currentTrackedStage > maxStages)
+                    {
+                        currentTrackedStage = 0;
+                    }
+                    Game.Console.Print($"[CustomSirens] Local Light Stage changed to: {currentTrackedStage} / {maxStages}");
+                }
+                wasLstKey = isLstKey;
+            }
+
             CheckToneKey(PluginConfig.Snd_SrnTon1, ref was1, 1, isLightsOn);
             CheckToneKey(PluginConfig.Snd_SrnTon2, ref was2, 2, isLightsOn);
             CheckToneKey(PluginConfig.Snd_SrnTon3, ref was3, 3, isLightsOn);
@@ -388,7 +498,7 @@ namespace CustomELSSirens
                 {
                     CachedSound sound = GetCachedSound(manualPath);
                     if (sound != null)
-                        activeManual.Play(sound, true, hasCustomManual ? PluginConfig.ManualVol : GetPerSirenVolume($"Tone{toneToPlay}Vol"));
+                        activeManual.Play(sound, true, hasCustomManual ? PluginConfig.ManualVol : GetPerSirenVolume(CurrentVehicleModel, $"Tone{toneToPlay}Vol"));
                 }
             }
             else if (!isManulPressed && wasManul)
@@ -467,7 +577,7 @@ namespace CustomELSSirens
                 {
                     CachedSound sound = GetCachedSound(path);
                     if (sound != null)
-                        activeHorn.Play(sound, true, GetPerSirenVolume("HornVol"));
+                        activeHorn.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, "HornVol"));
                 }
             }
             else if (!isHornPressed && wasHorn)
@@ -510,7 +620,7 @@ namespace CustomELSSirens
             string path = GetProfileSiren(CurrentVehicleModel, $"Tone{activeToneIndex}");
             CachedSound sound = GetCachedSound(path);
             if (sound != null)
-                activeSiren.Play(sound, true, GetPerSirenVolume($"Tone{activeToneIndex}Vol"));
+                activeSiren.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, $"Tone{activeToneIndex}Vol"));
         }
 
         private static void CheckToneKey(System.Windows.Forms.Keys key, ref bool wasKey, int toneIndex, bool isLightsOn)
@@ -550,25 +660,26 @@ namespace CustomELSSirens
                         activeToneIndex = toneIndex;
                         CachedSound sound = GetCachedSound(path);
                         if (sound != null)
-                            activeSiren.Play(sound, true, GetPerSirenVolume($"Tone{toneIndex}Vol"));
+                            activeSiren.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, $"Tone{toneIndex}Vol"));
                     }
                 }
             }
             wasKey = isKey;
         }
 
-        private static float GetPerSirenVolume(string configKey)
+        private static float GetPerSirenVolume(string modelName, string configKey)
         {
+            float fallback = 1.0f;
             switch (configKey)
             {
-                case "Tone1Vol": return PluginConfig.Tone1Vol;
-                case "Tone2Vol": return PluginConfig.Tone2Vol;
-                case "Tone3Vol": return PluginConfig.Tone3Vol;
-                case "Tone4Vol": return PluginConfig.Tone4Vol;
-                case "HornVol": return PluginConfig.HornVol;
-                case "ManualVol": return PluginConfig.ManualVol;
-                default: return 1f;
+                case "Tone1Vol": fallback = PluginConfig.Tone1Vol; break;
+                case "Tone2Vol": fallback = PluginConfig.Tone2Vol; break;
+                case "Tone3Vol": fallback = PluginConfig.Tone3Vol; break;
+                case "Tone4Vol": fallback = PluginConfig.Tone4Vol; break;
+                case "HornVol": fallback = PluginConfig.HornVol; break;
+                case "ManualVol": fallback = PluginConfig.ManualVol; break;
             }
+            return GetVehicleVolume(modelName, configKey, fallback);
         }
 
         private static string GetProfileSiren(string modelName, string key)
@@ -618,7 +729,11 @@ namespace CustomELSSirens
             return sound;
         }
 
-        public static void ClearProfileCache() => _profileCache.Clear();
+        public static void ClearProfileCache()
+        {
+            _profileCache.Clear();
+            _volumeCache.Clear();
+        }
 
         public static void CacheVehicleSirens()
         {
@@ -633,8 +748,18 @@ namespace CustomELSSirens
             if (veh == null || !veh.IsValid()) return false;
 
             string modelName = GetVehicleModelName(veh);
-            bool restrictionActive = GetVehicleLightRestriction(modelName);
 
+            if (veh == currentVehicle)
+            {
+                bool enableTracking = GetVehicleLightStageTracking(modelName);
+                if (enableTracking)
+                {
+                    int maxStages = GetVehicleCustomStageAmount(modelName);
+                    return currentTrackedStage >= maxStages;
+                }
+            }
+
+            bool restrictionActive = GetVehicleLightRestriction(modelName);
             if (!restrictionActive && veh == currentVehicle) return true;
 
             if (veh.IsSirenOn) return true;
@@ -697,7 +822,7 @@ namespace CustomELSSirens
                     if (sound != null)
                     {
                         SirenPlayer aiPlayer = new SirenPlayer();
-                        aiPlayer.Play(sound, true, PluginConfig.Tone1Vol);
+                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, "Tone1Vol"));
 
                         AiSirenState state = new AiSirenState
                         {
@@ -761,7 +886,7 @@ namespace CustomELSSirens
                             CachedSound sound = GetCachedSound(path);
                             if (sound != null)
                             {
-                                aiPlayer.Play(sound, true, GetPerSirenVolume($"Tone{state.CurrentToneIndex}Vol"));
+                                aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{state.CurrentToneIndex}Vol"));
                                 state.NextToneChangeTime = Game.GameTime + (uint)rnd.Next(4000, 8000);
                             }
                         }
@@ -790,7 +915,7 @@ namespace CustomELSSirens
                                     CachedSound sound = GetCachedSound(path);
                                     if (sound != null)
                                     {
-                                        aiPlayer.Play(sound, true, GetPerSirenVolume($"Tone{nextTone}Vol"));
+                                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{nextTone}Vol"));
                                         state.CurrentToneIndex = nextTone;
                                     }
                                 }

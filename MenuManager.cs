@@ -17,12 +17,17 @@ namespace CustomELSSirens
 
         public static List<string> AvailableWavs = new List<string>();
 
-        private static UIMenuListItem modeItem, tone1Item, tone2Item, tone3Item, tone4Item, hornItem, manualItem;
+        public static UIMenuListItem modeItem;
+        private static UIMenuListItem tone1Item, tone2Item, tone3Item, tone4Item, hornItem, manualItem;
         private static UIMenuNumericScrollerItem<float> tone1Vol, tone2Vol, tone3Vol, tone4Vol, hornVol, manualVol;
         private static UIMenuNumericScrollerItem<float> masterVolumeItem;
 
-        private static UIMenuCheckboxItem controllerSupportItem;
         private static UIMenuCheckboxItem lightRestrictionItem;
+        private static UIMenuCheckboxItem lightStageTrackingItem;
+        private static UIMenuNumericScrollerItem<int> customStageAmountItem;
+
+        private static UIMenuCheckboxItem controllerSupportItem;
+        private static UIMenuCheckboxItem useElsKeybindsItem;
         private static UIMenuCheckboxItem hornInterruptItem;
         private static UIMenuCheckboxItem aiCutoffItem;
         private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
@@ -69,11 +74,14 @@ namespace CustomELSSirens
 
             List<dynamic> wavsDynamic = AvailableWavs.Cast<dynamic>().ToList();
 
-            // Main Menu Setup
             modeItem = new UIMenuListItem("~h~~y~Profile Mode", new List<dynamic> { "Global Default", "Vehicle Specific" }, 0);
 
-            // Moved to Main Menu so it behaves as a profile-specific save/load setting!
             lightRestrictionItem = new UIMenuCheckboxItem("~c~Siren Light Restriction", PluginConfig.SirenLightRestriction, "If enabled, emergency lights must be active to trigger custom sirens. Disable this if your addon vehicle's lights aren't being detected.");
+
+            lightStageTrackingItem = new UIMenuCheckboxItem("Toggle Custom Light stage ammount and Enable Light stage tracking", PluginConfig.EnableLightStageTracking, "Manually tracks the active ELS light stage by keypresses instead of relying on game status.");
+            customStageAmountItem = new UIMenuNumericScrollerItem<int>("Custom Light Stage Amount", "Select the maximum amount of light stages to track (1-4). Sirens will only play on the highest stage.", 1, 4, 1);
+            customStageAmountItem.Value = PluginConfig.CustomLightStageAmount;
+            customStageAmountItem.Enabled = PluginConfig.EnableLightStageTracking;
 
             masterVolumeItem = new UIMenuNumericScrollerItem<float>("~h~~y~Master Volume", "Volume Percentage for the global Volume", 0f, 100f, 5f);
             masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
@@ -106,6 +114,8 @@ namespace CustomELSSirens
 
             MainMenu.AddItem(modeItem);
             MainMenu.AddItem(lightRestrictionItem);
+            MainMenu.AddItem(lightStageTrackingItem);
+            MainMenu.AddItem(customStageAmountItem);
             MainMenu.AddItem(masterVolumeItem);
             MainMenu.AddItem(tone1Item); MainMenu.AddItem(tone1Vol);
             MainMenu.AddItem(tone2Item); MainMenu.AddItem(tone2Vol);
@@ -115,10 +125,10 @@ namespace CustomELSSirens
             MainMenu.AddItem(manualItem); MainMenu.AddItem(manualVol);
             MainMenu.AddItem(saveItem);
 
-            // Submenu Setup
             SettingsMenu = MenuPool.AddSubMenu(MainMenu, "~h~~y~Misc Settings");
 
             controllerSupportItem = new UIMenuCheckboxItem("~c~Controller Support", PluginConfig.EnableControllerSupport, "Enables Controller inputs for toggling sirens (DPad Down, DPad Right, B).");
+            useElsKeybindsItem = new UIMenuCheckboxItem("~c~Use ELS Keybinds", PluginConfig.UseElsKeybinds, "If enabled, directly imports and syncs your controls from the root directory ELS.ini on startup.");
             hornInterruptItem = new UIMenuCheckboxItem("~c~Horn Interrupts Siren", PluginConfig.HornInterruptsSiren, "If enabled, blasting the airhorn will temporarily mute the primary siren.");
 
             reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
@@ -142,6 +152,7 @@ namespace CustomELSSirens
             UIMenuItem patchELSItem = new UIMenuItem("~r~Kill ELS Sounds (Patch VCFs)", "~r~Mutes the Sirens in your ELS VCFs (Creates a backup of your current VCFs before patching).~n~Game Restart required!");
 
             SettingsMenu.AddItem(controllerSupportItem);
+            SettingsMenu.AddItem(useElsKeybindsItem);
             SettingsMenu.AddItem(hornInterruptItem);
             SettingsMenu.AddItem(reverbIntensityItem);
             SettingsMenu.AddItem(maxDistanceItem);
@@ -153,16 +164,24 @@ namespace CustomELSSirens
             SettingsMenu.AddItem(reloadWavsItem);
             SettingsMenu.AddItem(patchELSItem);
 
-            // Bind Events 
             MainMenu.OnListChange += (s, item, idx) => { if (item == modeItem) UpdateMenuSelections(); };
 
+            MainMenu.OnCheckboxChange += (s, item, checkedState) =>
+            {
+                if (item == lightStageTrackingItem)
+                {
+                    customStageAmountItem.Enabled = checkedState;
+                }
+            };
+
+            tone1Vol.IndexChanged += (s, o, n) => { UpdateVolSlider("Tone1Vol", tone1Vol.Value / 100f); };
+            tone2Vol.IndexChanged += (s, o, n) => { UpdateVolSlider("Tone2Vol", tone2Vol.Value / 100f); };
+            tone3Vol.IndexChanged += (s, o, n) => { UpdateVolSlider("Tone3Vol", tone3Vol.Value / 100f); };
+            tone4Vol.IndexChanged += (s, o, n) => { UpdateVolSlider("Tone4Vol", tone4Vol.Value / 100f); };
+            hornVol.IndexChanged += (s, o, n) => { UpdateVolSlider("HornVol", hornVol.Value / 100f); };
+            manualVol.IndexChanged += (s, o, n) => { UpdateVolSlider("ManualVol", manualVol.Value / 100f); };
+
             masterVolumeItem.IndexChanged += (s, o, n) => { PluginConfig.MasterVolume = masterVolumeItem.Value / 100f; PluginConfig.SaveConfig(); };
-            tone1Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone1Vol = tone1Vol.Value / 100f; PluginConfig.SaveConfig(); };
-            tone2Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone2Vol = tone2Vol.Value / 100f; PluginConfig.SaveConfig(); };
-            tone3Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone3Vol = tone3Vol.Value / 100f; PluginConfig.SaveConfig(); };
-            tone4Vol.IndexChanged += (s, o, n) => { PluginConfig.Tone4Vol = tone4Vol.Value / 100f; PluginConfig.SaveConfig(); };
-            hornVol.IndexChanged += (s, o, n) => { PluginConfig.HornVol = hornVol.Value / 100f; PluginConfig.SaveConfig(); };
-            manualVol.IndexChanged += (s, o, n) => { PluginConfig.ManualVol = manualVol.Value / 100f; PluginConfig.SaveConfig(); };
 
             MainMenu.OnItemSelect += (s, item, idx) =>
             {
@@ -186,6 +205,11 @@ namespace CustomELSSirens
                     PluginConfig.EnableControllerSupport = checkedState;
                     PluginConfig.SaveConfig();
                 }
+                if (item == useElsKeybindsItem)
+                {
+                    PluginConfig.UseElsKeybinds = checkedState;
+                    PluginConfig.SaveConfig();
+                }
                 if (item == hornInterruptItem)
                 {
                     PluginConfig.HornInterruptsSiren = checkedState;
@@ -207,6 +231,7 @@ namespace CustomELSSirens
                     PluginConfig.Load();
 
                     controllerSupportItem.Checked = PluginConfig.EnableControllerSupport;
+                    useElsKeybindsItem.Checked = PluginConfig.UseElsKeybinds;
                     hornInterruptItem.Checked = PluginConfig.HornInterruptsSiren;
                     masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
                     aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
@@ -216,17 +241,9 @@ namespace CustomELSSirens
                     maxDistanceItem.Value = PluginConfig.MaxDistance;
                     reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
 
-                    tone1Vol.Value = PluginConfig.Tone1Vol * 100f;
-                    tone2Vol.Value = PluginConfig.Tone2Vol * 100f;
-                    tone3Vol.Value = PluginConfig.Tone3Vol * 100f;
-                    tone4Vol.Value = PluginConfig.Tone4Vol * 100f;
-                    hornVol.Value = PluginConfig.HornVol * 100f;
-                    manualVol.Value = PluginConfig.ManualVol * 100f;
-
-                    // Fetch updated UI states
                     UpdateMenuSelections();
 
-                    Game.DisplayNotification("~g~Configurations & Keybinds Reloaded Successfully!");
+                    Game.DisplayNotification("~g~Configurations & Keybinds Loaded!");
                 }
                 if (item == reloadWavsItem)
                 {
@@ -244,6 +261,27 @@ namespace CustomELSSirens
                     Game.DisplayNotification("~g~WAV Files Reloaded Successfully!");
                 }
             };
+        }
+
+        private static void UpdateVolSlider(string key, float value)
+        {
+            if (modeItem.Index == 0)
+            {
+                switch (key)
+                {
+                    case "Tone1Vol": PluginConfig.Tone1Vol = value; break;
+                    case "Tone2Vol": PluginConfig.Tone2Vol = value; break;
+                    case "Tone3Vol": PluginConfig.Tone3Vol = value; break;
+                    case "Tone4Vol": PluginConfig.Tone4Vol = value; break;
+                    case "HornVol": PluginConfig.HornVol = value; break;
+                    case "ManualVol": PluginConfig.ManualVol = value; break;
+                }
+                SirenManager.UpdateCachedVolume("Global", key, value);
+            }
+            else
+            {
+                SirenManager.UpdateCachedVolume(SirenManager.CurrentVehicleModel, key, value);
+            }
         }
 
         private static void PatchELSVCFs()
@@ -326,17 +364,20 @@ namespace CustomELSSirens
             SetIndex(tone3Item, "Tone3"); SetIndex(tone4Item, "Tone4");
             SetIndex(hornItem, "Horn"); SetIndex(manualItem, "Manual");
 
-            // Update the light restriction checkbox based on the currently selected profile mode!
-            if (modeItem.Index == 0)
-            {
-                // Global Mode fallback
-                lightRestrictionItem.Checked = ini.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
-            }
-            else
-            {
-                // Vehicle Specific Mode
-                lightRestrictionItem.Checked = ini.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
-            }
+            tone1Vol.Value = ini.ReadSingle("SirenVolumes", "Tone1Vol", PluginConfig.Tone1Vol) * 100f;
+            tone2Vol.Value = ini.ReadSingle("SirenVolumes", "Tone2Vol", PluginConfig.Tone2Vol) * 100f;
+            tone3Vol.Value = ini.ReadSingle("SirenVolumes", "Tone3Vol", PluginConfig.Tone3Vol) * 100f;
+            tone4Vol.Value = ini.ReadSingle("SirenVolumes", "Tone4Vol", PluginConfig.Tone4Vol) * 100f;
+            hornVol.Value = ini.ReadSingle("SirenVolumes", "HornVol", PluginConfig.HornVol) * 100f;
+            manualVol.Value = ini.ReadSingle("SirenVolumes", "ManualVol", PluginConfig.ManualVol) * 100f;
+
+            lightRestrictionItem.Checked = ini.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
+
+            bool tracking = ini.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking);
+            lightStageTrackingItem.Checked = tracking;
+
+            customStageAmountItem.Value = ini.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount);
+            customStageAmountItem.Enabled = tracking;
         }
 
         private static void SaveToneFilesToProfile()
@@ -352,17 +393,33 @@ namespace CustomELSSirens
             ini.Write("Sirens", "Horn", AvailableWavs[hornItem.Index]);
             ini.Write("Sirens", "Manual", AvailableWavs[manualItem.Index]);
 
-            // Save the light restriction bypass setting directly to this specific profile!
-            ini.Write("Settings", "SirenLightRestriction", lightRestrictionItem.Checked.ToString());
+            ini.Write("SirenVolumes", "Tone1Vol", (tone1Vol.Value / 100f).ToString());
+            ini.Write("SirenVolumes", "Tone2Vol", (tone2Vol.Value / 100f).ToString());
+            ini.Write("SirenVolumes", "Tone3Vol", (tone3Vol.Value / 100f).ToString());
+            ini.Write("SirenVolumes", "Tone4Vol", (tone4Vol.Value / 100f).ToString());
+            ini.Write("SirenVolumes", "HornVol", (hornVol.Value / 100f).ToString());
+            ini.Write("SirenVolumes", "ManualVol", (manualVol.Value / 100f).ToString());
 
-            // If we are saving to Global, also update the global runtime fallback variable
+            ini.Write("Settings", "SirenLightRestriction", lightRestrictionItem.Checked.ToString());
+            ini.Write("Settings", "EnableLightStageTracking", lightStageTrackingItem.Checked.ToString());
+            ini.Write("Settings", "CustomLightStageAmount", customStageAmountItem.Value.ToString());
+
             if (modeItem.Index == 0)
             {
+                PluginConfig.Tone1Vol = tone1Vol.Value / 100f;
+                PluginConfig.Tone2Vol = tone2Vol.Value / 100f;
+                PluginConfig.Tone3Vol = tone3Vol.Value / 100f;
+                PluginConfig.Tone4Vol = tone4Vol.Value / 100f;
+                PluginConfig.HornVol = hornVol.Value / 100f;
+                PluginConfig.ManualVol = manualVol.Value / 100f;
+
                 PluginConfig.SirenLightRestriction = lightRestrictionItem.Checked;
+                PluginConfig.EnableLightStageTracking = lightStageTrackingItem.Checked;
+                PluginConfig.CustomLightStageAmount = customStageAmountItem.Value;
                 PluginConfig.SaveConfig();
             }
 
-            Game.DisplayNotification($"~g~Saved tone selections to {targetIni}!");
+            Game.DisplayNotification($"~g~Saved selections & volumes to {targetIni}!");
         }
     }
 }

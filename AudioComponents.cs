@@ -27,9 +27,9 @@ namespace CustomELSSirens
         private uint fadeStart = 0;
         private bool isExitFade = false;
 
-        private const uint STANDARD_FADE_DURATION = 100; // 0.1 seconds smooth tail-off
-        private const uint EXIT_HOLD_DURATION = 300;     // 0.3 seconds full volume hold after exit
-        private const uint EXIT_FADE_DURATION = 150;     // 0.15 seconds quick tail-off
+        private const uint STANDARD_FADE_DURATION = 100;
+        private const uint EXIT_HOLD_DURATION = 300;
+        private const uint EXIT_FADE_DURATION = 150;
 
         public void Play(CachedSound cached, bool loop, float volumeMultiplier)
         {

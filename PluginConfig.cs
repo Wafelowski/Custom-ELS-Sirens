@@ -11,7 +11,6 @@ namespace CustomELSSirens
         public static string ProfilesFolder = BaseFolder + @"Profiles\";
         public static string ConfigFile = BaseFolder + "Config.ini";
 
-        // Keyboard Binds
         public static Keys MenuKey = Keys.F10;
         public static Keys Sound_Manul = (Keys)82;
         public static Keys Snd_SrnTon1 = (Keys)49;
@@ -21,14 +20,16 @@ namespace CustomELSSirens
         public static Keys Snd_SrnScan = (Keys)53;
         public static Keys Snd_SrnTonX = (Keys)54;
         public static Keys Snd_SrnPnic = (Keys)55;
+        public static Keys Toggle_Lsts = Keys.J;
 
-        // Controller Support
         public static bool EnableControllerSupport = true;
         public static ControllerButtons Controller_Manul = ControllerButtons.B;
         public static ControllerButtons Controller_SrnToggle = ControllerButtons.DPadDown;
         public static ControllerButtons Controller_SrnTonX = ControllerButtons.DPadRight;
 
-        // Background Settings
+        public static bool UseElsKeybinds = true;
+        public static bool EnableLightStageTracking = false;
+        public static int CustomLightStageAmount = 3;
         public static bool SirenLightRestriction = true;
         public static bool HornInterruptsSiren = true;
         public static float MasterVolume = 0.5f;
@@ -52,12 +53,21 @@ namespace CustomELSSirens
         {
             if (!Directory.Exists(BaseFolder)) Directory.CreateDirectory(BaseFolder);
 
-            LoadELSKeybinds();
-
             InitializationFile ini = new InitializationFile(ConfigFile);
+
+            UseElsKeybinds = ini.ReadBoolean("Settings", "UseElsKeybinds", UseElsKeybinds);
+
+            if (UseElsKeybinds)
+            {
+                LoadELSKeybinds();
+            }
+
             if (!ini.Exists())
             {
                 ini.Create();
+                ini.Write("Settings", "UseElsKeybinds", UseElsKeybinds.ToString());
+                ini.Write("Settings", "EnableLightStageTracking", EnableLightStageTracking.ToString());
+                ini.Write("Settings", "CustomLightStageAmount", CustomLightStageAmount.ToString());
                 ini.Write("Settings", "MasterVolume", MasterVolume.ToString());
                 ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
                 ini.Write("Settings", "AiScanInterval", AiScanInterval.ToString());
@@ -79,6 +89,7 @@ namespace CustomELSSirens
                 ini.Write("Keybinds", "Snd_SrnScan", Snd_SrnScan.ToString());
                 ini.Write("Keybinds", "Snd_SrnTonX", Snd_SrnTonX.ToString());
                 ini.Write("Keybinds", "Snd_SrnPnic", Snd_SrnPnic.ToString());
+                ini.Write("Keybinds", "Toggle_Lsts", Toggle_Lsts.ToString());
 
                 ini.Write("Keybinds", "Controller_Manul", Controller_Manul.ToString());
                 ini.Write("Keybinds", "Controller_SrnToggle", Controller_SrnToggle.ToString());
@@ -93,6 +104,8 @@ namespace CustomELSSirens
             }
             else
             {
+                EnableLightStageTracking = ini.ReadBoolean("Settings", "EnableLightStageTracking", EnableLightStageTracking);
+                CustomLightStageAmount = ini.ReadInt32("Settings", "CustomLightStageAmount", CustomLightStageAmount);
                 MasterVolume = ini.ReadSingle("Settings", "MasterVolume", MasterVolume);
                 AutomaticAiSirenCutoff = ini.ReadBoolean("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff);
                 AiScanInterval = ini.ReadInt32("Settings", "AiScanInterval", AiScanInterval);
@@ -106,14 +119,19 @@ namespace CustomELSSirens
                 HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
 
                 MenuKey = ini.ReadEnum("Keybinds", "MenuKey", ini.ReadEnum("Settings", "MenuKey", MenuKey));
-                Sound_Manul = ini.ReadEnum("Keybinds", "Sound_Manul", Sound_Manul);
-                Snd_SrnTon1 = ini.ReadEnum("Keybinds", "Snd_SrnTon1", Snd_SrnTon1);
-                Snd_SrnTon2 = ini.ReadEnum("Keybinds", "Snd_SrnTon2", Snd_SrnTon2);
-                Snd_SrnTon3 = ini.ReadEnum("Keybinds", "Snd_SrnTon3", Snd_SrnTon3);
-                Snd_SrnTon4 = ini.ReadEnum("Keybinds", "Snd_SrnTon4", Snd_SrnTon4);
-                Snd_SrnScan = ini.ReadEnum("Keybinds", "Snd_SrnScan", Snd_SrnScan);
-                Snd_SrnTonX = ini.ReadEnum("Keybinds", "Snd_SrnTonX", Snd_SrnTonX);
-                Snd_SrnPnic = ini.ReadEnum("Keybinds", "Snd_SrnPnic", Snd_SrnPnic);
+
+                if (!UseElsKeybinds)
+                {
+                    Sound_Manul = ini.ReadEnum("Keybinds", "Sound_Manul", Sound_Manul);
+                    Snd_SrnTon1 = ini.ReadEnum("Keybinds", "Snd_SrnTon1", Snd_SrnTon1);
+                    Snd_SrnTon2 = ini.ReadEnum("Keybinds", "Snd_SrnTon2", Snd_SrnTon2);
+                    Snd_SrnTon3 = ini.ReadEnum("Keybinds", "Snd_SrnTon3", Snd_SrnTon3);
+                    Snd_SrnTon4 = ini.ReadEnum("Keybinds", "Snd_SrnTon4", Snd_SrnTon4);
+                    Snd_SrnScan = ini.ReadEnum("Keybinds", "Snd_SrnScan", Snd_SrnScan);
+                    Snd_SrnTonX = ini.ReadEnum("Keybinds", "Snd_SrnTonX", Snd_SrnTonX);
+                    Snd_SrnPnic = ini.ReadEnum("Keybinds", "Snd_SrnPnic", Snd_SrnPnic);
+                    Toggle_Lsts = ini.ReadEnum("Keybinds", "Toggle_Lsts", Toggle_Lsts);
+                }
 
                 Controller_Manul = ini.ReadEnum("Keybinds", "Controller_Manul", ini.ReadEnum("Settings", "Controller_Manul", Controller_Manul));
                 Controller_SrnToggle = ini.ReadEnum("Keybinds", "Controller_SrnToggle", ini.ReadEnum("Settings", "Controller_SrnToggle", Controller_SrnToggle));
@@ -134,6 +152,7 @@ namespace CustomELSSirens
             if (File.Exists(elsPath))
             {
                 InitializationFile elsIni = new InitializationFile(elsPath);
+                Toggle_Lsts = (Keys)elsIni.ReadInt32("CONTROLS", "Toggle_Lsts", 74);
                 Sound_Manul = (Keys)elsIni.ReadInt32("CONTROLS", "Sound_Manul", (int)Sound_Manul);
                 Snd_SrnTon1 = (Keys)elsIni.ReadInt32("CONTROLS", "Snd_SrnTon1", (int)Snd_SrnTon1);
                 Snd_SrnTon2 = (Keys)elsIni.ReadInt32("CONTROLS", "Snd_SrnTon2", (int)Snd_SrnTon2);
@@ -145,7 +164,7 @@ namespace CustomELSSirens
             }
             else
             {
-                Game.Console.Print("[CustomSirens] Warning: 'ELS.ini' not found in root directory! Default keybinds active.");
+                Game.Console.Print("[CustomSirens] Warning: 'ELS.ini' not found in root directory! Custom defaults active.");
             }
         }
 
@@ -159,6 +178,9 @@ namespace CustomELSSirens
             ini.Write("SirenVolumes", "HornVol", HornVol.ToString());
             ini.Write("SirenVolumes", "ManualVol", ManualVol.ToString());
 
+            ini.Write("Settings", "UseElsKeybinds", UseElsKeybinds.ToString());
+            ini.Write("Settings", "EnableLightStageTracking", EnableLightStageTracking.ToString());
+            ini.Write("Settings", "CustomLightStageAmount", CustomLightStageAmount.ToString());
             ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
             ini.Write("Settings", "SirenLightRestriction", SirenLightRestriction.ToString());
             ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
@@ -179,6 +201,7 @@ namespace CustomELSSirens
             ini.Write("Keybinds", "Snd_SrnScan", Snd_SrnScan.ToString());
             ini.Write("Keybinds", "Snd_SrnTonX", Snd_SrnTonX.ToString());
             ini.Write("Keybinds", "Snd_SrnPnic", Snd_SrnPnic.ToString());
+            ini.Write("Keybinds", "Toggle_Lsts", Toggle_Lsts.ToString());
 
             ini.Write("Keybinds", "Controller_Manul", Controller_Manul.ToString());
             ini.Write("Keybinds", "Controller_SrnToggle", Controller_SrnToggle.ToString());

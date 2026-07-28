@@ -19,7 +19,7 @@ namespace CustomELSSirens
         public static void Main()
         {
             PluginConfig.Load();
-            MenuManager.SetupMenu(); // Reverted: Removed InitializeModelHashCache call
+            MenuManager.SetupMenu();
             Game.DisplayNotification($"~b~Custom Sirens~w~ initialized. Press ~y~{PluginConfig.MenuKey}~w~ or use console for the menu.");
 
             new System.Threading.Timer(_ =>
