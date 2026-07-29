@@ -49,7 +49,7 @@ namespace CustomELSSirens
                 reverbProvider = new CityReverbProvider(panProvider) { BaseReverb = 0.30f, DistanceReverb = 0f, Intensity = PluginConfig.ReverbIntensity };
                 volProvider = new VolumeSampleProvider(reverbProvider) { Volume = 0f };
 
-                waveOut = new WaveOutEvent { DesiredLatency = 80, NumberOfBuffers = 2 };
+                waveOut = new WaveOutEvent { DesiredLatency = 120, NumberOfBuffers = 3 };
                 waveOut.Init(volProvider);
                 waveOut.Play();
 

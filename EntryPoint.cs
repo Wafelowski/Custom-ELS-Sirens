@@ -24,7 +24,7 @@ namespace CustomELSSirens
 
             new System.Threading.Timer(_ =>
             {
-                if (Environment.TickCount - _fiberHeartbeat > 250)
+                if (Environment.TickCount - _fiberHeartbeat > 1000)
                 {
                     SirenManager.DropVolumes();
                 }
