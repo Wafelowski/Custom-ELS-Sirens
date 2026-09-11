@@ -1,0 +1,60 @@
+# 1.9.0.0
+
+## Requested controls and sound banks
+
+- Horn interruption now cancels the primary siren voice and restarts the latest selected tone from the beginning on release. Holding the horn does not repeatedly issue stop/start requests. Switching the siren off during interruption prevents a later restart.
+- Added Tone5 and Tone6 to profiles, volumes, menu editing, direct keys, manual fallback, auto-scan, and AI rotation. Defaults are D8/D9 to preserve existing ELS scan/cycle/panic bindings. Single-tone auto-scan no longer restarts the same WAV every six seconds.
+- Added per-profile rumbler support and separate normal/ON WAV and volume banks for all six tones, horn, and manual. Empty/missing alternate slots use the normal sound. Both menu banks retain selections while switching the editor and save together.
+- Added a live per-vehicle rumbler menu switch and configurable F11 default toggle. Runtime rumbler state is separate for each vehicle; it also follows vehicles tracked as AI. Preloading covers both banks using the existing background worker.
+- Added vehicle-specific RedBeacon and MatrixText1/2/3 extra IDs plus configurable keybinds. The beacon is independent; matrix selections are mutually exclusive and can be toggled off. Missing/unassigned extras remain inactive; duplicate and out-of-range IDs are normalized safely. Extra IDs never inherit globally across unrelated vehicle meshes.
+- Added modifier-chord handling and unbound-key checks. New feature bindings work alongside ELS imports and support per-profile overrides. Held feature keys do not trigger on vehicle entry or menu/pause exit.
+- Preserve saved missing/nested WAV filenames when editing another setting. Preserve precise volume values when merely switching banks instead of rounding them to the menu's slider step.
+
+## Build and verification
+
+- Added PlaybackRules.cs and VehicleExtras.cs to the plugin project, and linked the pure playback/control rules into the regression project.
+- Added six regression checks (17 total) and example Config/profile INIs. Updated setup, behavior, and in-game acceptance instructions.
+- C# syntax and project paths checked; original dependency DLLs retained unchanged. Compilation, regression execution, and GTA V behavior remain unverified because the local .NET runtime cannot initialize and the game is unavailable.
+
+# 1.8.1.0
+
+## Freeze-related fixes
+
+- Removed `WaveOutEvent.Stop/Dispose/Init/Play` from `SirenPlayer.Play` on the game fiber. One persistent output is created and maintained by an audio worker.
+- Removed synchronous WAV decoding from vehicle entry, tone changes, and AI discovery. CachedSound now represents a lazy audio handle; decoding/resampling happens on the worker.
+- Added cancellation for pending playback. A delayed load cannot resurrect a released horn, stopped siren, or removed vehicle voice.
+- Fixed the infinite loop in `CachedSampleProvider.Read` for zero-length looping data. Empty WAVs are also rejected during decoding.
+- Replaced the unretained timer and cross-thread AI dictionary iteration with a scalar heartbeat checked inside the output callback.
+
+## Audio correctness and resource use
+
+- Standardized sample formats before mixing; downmix stereo once while caching.
+- Made stereo loop crossfade weights identical for both channels of each frame.
+- Added short gain ramps and output clipping protection; reject/sanitize non-finite audio/configuration values.
+- Continue fade completion while a voice is force-muted by the menu or an interrupting sound.
+- Stop detached/deleted vehicle voices immediately so they cannot be left fading without an updater.
+- Preserve the main siren's playback position across horn/manual interruptions instead of recreating it on release.
+- Handle failed loads once, emit useful console diagnostics, bound cache retention, and retry an unavailable device without blocking the game fiber.
+- Prune ended/cancelled mixer inputs even if the output device is unavailable; release output/cache resources on worker exit.
+
+## Profiles, controls, and AI
+
+- Cache profile settings, selections, and per-tone volumes. Steady-state per-frame checks no longer open INIs or call File.Exists.
+- Apply vehicle-specific manual volume, and update active voices when their volume controls change.
+- Invalidate actual audio handles on WAV reload, including failed loads. Refresh snapshots on configuration/profile reload.
+- Prevent programmatic menu synchronization from firing save/volume side effects. Prevent empty vehicle-profile filenames and use case-insensitive WAV selection matching.
+- Toggle the menu on the key's rising edge; close submenus consistently and suspend siren inputs during menus/pauses.
+- Fix tracked light-stage timing and honor disabled light restriction before checking tracked stages.
+- Use VCF stage configuration for the current vehicle's decorator fallback; exclude backup VCFs from lookup.
+- Cancel a tracked AI voice immediately when entering its vehicle; enforce a lowered AI limit and avoid scanning the world when already at capacity.
+- Allow AI to start with another configured tone when Tone1 is unavailable; use wrap-safe comparisons for scheduled tone changes/scans.
+- Avoid muting the main siren for a missing manual sound. Retain the existing native-horn interruption option.
+- Read decimal-dot and legacy decimal-comma settings, write floats consistently, clamp invalid values, and save MinDistance correctly.
+- Preserve subdirectories when backing up ELS VCFs.
+
+## Build and verification
+
+- Replaced all absolute dependency HintPaths with relative `dependencies` paths.
+- Added an explicit C# 7.3 setting and disabled copying the RAGE SDK reference as a runtime DLL.
+- Added `build.cmd`, a Windows regression project, and installation/acceptance instructions.
+- Syntax and project-path checks passed. Compilation and the regression/in-game runs remain unverified in this environment; see README.md.
