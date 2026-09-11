@@ -1,359 +1,110 @@
-﻿using System;
-using NAudio.Wave;
-using NAudio.Wave.SampleProviders;
+using System;
 using Rage;
 
 namespace CustomELSSirens
 {
-    public class AiSirenState
+    public sealed class AiSirenState
     {
-        public SirenPlayer Player { get; set; } = new SirenPlayer();
+        public SirenPlayer Player { get; set; }
+        public string ModelName { get; set; }
+        public bool RumblerOn { get; set; }
         public int CurrentToneIndex { get; set; } = 1;
-        public uint NextToneChangeTime { get; set; } = 0;
+        public uint NextToneChangeTime { get; set; }
     }
 
-    public class SirenPlayer : IDisposable
+    // Only the game fiber touches entities/natives. Audio threads read scalars
+    // and a cancellable request; they never access a Rage entity.
+    public sealed class SirenPlayer : IDisposable
     {
-        private WaveOutEvent waveOut;
-        private CachedSampleProvider cachedProvider;
-        private PanningSampleProvider panProvider;
-        private CityReverbProvider reverbProvider;
-        private VolumeSampleProvider volProvider;
+        private volatile PlaybackRequest request;
         private float perSirenVolume = 1f;
+        private uint fadeStart;
+        private bool isExitFade;
+        internal volatile float TargetVolume;
+        internal volatile float Pan;
+        internal volatile float DistanceReverb;
+        internal volatile float ReverbIntensity = 1f;
 
-        public bool IsPlaying { get; private set; }
+        public bool IsPlaying
+        {
+            get
+            {
+                var current = request;
+                return current != null && !current.Cancelled && !current.Completed;
+            }
+        }
         public bool IsFadingOut { get; private set; }
-
-        private uint fadeStart = 0;
-        private bool isExitFade = false;
-
-        private const uint STANDARD_FADE_DURATION = 100;
-        private const uint EXIT_HOLD_DURATION = 300;
-        private const uint EXIT_FADE_DURATION = 150;
 
         public void Play(CachedSound cached, bool loop, float volumeMultiplier)
         {
             Stop(true);
-            perSirenVolume = volumeMultiplier;
-            if (cached == null) return;
-
-            try
-            {
-                cachedProvider = new CachedSampleProvider(cached, loop);
-                ISampleProvider sp = cachedProvider;
-
-                if (sp.WaveFormat.Channels == 2)
-                    sp = new StereoToMonoSampleProvider(sp) { LeftVolume = 0.5f, RightVolume = 0.5f };
-
-                panProvider = new PanningSampleProvider(sp) { Pan = 0f };
-                reverbProvider = new CityReverbProvider(panProvider) { BaseReverb = 0.30f, DistanceReverb = 0f, Intensity = PluginConfig.ReverbIntensity };
-                volProvider = new VolumeSampleProvider(reverbProvider) { Volume = 0f };
-
-                waveOut = new WaveOutEvent { DesiredLatency = 120, NumberOfBuffers = 3 };
-                waveOut.Init(volProvider);
-                waveOut.Play();
-
-                IsPlaying = true;
-                IsFadingOut = false;
-            }
-            catch { }
+            if (cached == null || cached.Failed) return;
+            perSirenVolume = AudioMath.Clamp(volumeMultiplier, 0f, 1f);
+            var next = new PlaybackRequest(this, cached, loop);
+            request = next;
+            AudioEngine.Play(next);
         }
 
         public void Stop(bool dropInstantly = false, bool exitFade = false)
         {
-            if (!IsPlaying) return;
-
             if (dropInstantly)
             {
-                IsPlaying = false;
+                var current = request;
+                if (current != null) current.Cancelled = true;
+                request = null;
+                TargetVolume = 0f;
                 IsFadingOut = false;
-
-                try
-                {
-                    waveOut?.Stop();
-                    waveOut?.Dispose();
-                }
-                catch { }
-
-                waveOut = null;
-                cachedProvider = null;
-                panProvider = null;
-                reverbProvider = null;
-                volProvider = null;
+                return;
             }
-            else
+            if (IsPlaying && !IsFadingOut)
             {
-                if (!IsFadingOut)
-                {
-                    IsFadingOut = true;
-                    fadeStart = Game.GameTime;
-                    isExitFade = exitFade;
-                }
+                IsFadingOut = true;
+                fadeStart = Game.GameTime;
+                isExitFade = exitFade;
             }
         }
 
         public void Dispose() => Stop(true);
-
-        public void SetVolume(float vol)
-        {
-            if (volProvider != null)
-                volProvider.Volume = MathHelper.Clamp(vol, 0f, 1f);
-        }
+        public void SetVolume(float volume) => TargetVolume = AudioMath.Clamp(volume, 0f, 1f);
+        public void SetSirenVolume(float volume) => perSirenVolume = AudioMath.Clamp(volume, 0f, 1f);
 
         public void Update3D(Vehicle veh, Vector3 camPos, Vector3 camRot, bool forceMute = false)
         {
-            if (!IsPlaying || volProvider == null || panProvider == null) return;
+            if (!IsPlaying) { IsFadingOut = false; return; }
+            if (veh == null || !veh.IsValid() || !veh.IsAlive) { Stop(true); return; }
 
-            if (!veh.IsValid())
-            {
-                Stop(true);
-                return;
-            }
-
-            if (forceMute)
-            {
-                volProvider.Volume = 0f;
-                return;
-            }
-
-            Vector3 sirenPos = veh.Position;
-            float distance = Vector3.Distance(camPos, sirenPos);
-            float targetVolume;
-
-            if (distance <= PluginConfig.MinDistance)
-                targetVolume = 1f;
-            else if (distance >= PluginConfig.MaxDistance)
-                targetVolume = 0f;
-            else
-            {
-                float tDist = (distance - PluginConfig.MinDistance) / (PluginConfig.MaxDistance - PluginConfig.MinDistance);
-                targetVolume = (float)Math.Pow(1.0 - tDist, PluginConfig.FalloffExponent);
-            }
-
-            float fadeMultiplier = 1f;
+            // Advance fades even when a menu or manual tone mutes this voice.
+            float fade = 1f;
             if (IsFadingOut)
             {
-                uint elapsed = Game.GameTime - fadeStart;
-
-                if (isExitFade)
+                uint elapsed = unchecked(Game.GameTime - fadeStart);
+                uint hold = isExitFade ? 300u : 0u;
+                uint duration = isExitFade ? 150u : 100u;
+                if (elapsed >= hold + duration) { Stop(true); return; }
+                if (elapsed >= hold)
                 {
-                    if (elapsed < EXIT_HOLD_DURATION)
-                    {
-                        fadeMultiplier = 1f;
-                    }
-                    else
-                    {
-                        uint fadeElapsed = elapsed - EXIT_HOLD_DURATION;
-                        if (fadeElapsed >= EXIT_FADE_DURATION)
-                        {
-                            Stop(true);
-                            return;
-                        }
-                        float t = (float)fadeElapsed / EXIT_FADE_DURATION;
-                        fadeMultiplier = (1f - t) * (1f - t);
-                    }
-                }
-                else
-                {
-                    if (elapsed >= STANDARD_FADE_DURATION)
-                    {
-                        Stop(true);
-                        return;
-                    }
-                    float t = (float)elapsed / STANDARD_FADE_DURATION;
-                    fadeMultiplier = (1f - t) * (1f - t);
+                    float remaining = 1f - (float)(elapsed - hold) / duration;
+                    fade = remaining * remaining;
                 }
             }
 
-            if (reverbProvider != null)
-            {
-                float reverbScale = MathHelper.Clamp(distance / (PluginConfig.MaxDistance * 0.4f), 0f, 1f);
-                reverbProvider.DistanceReverb = reverbScale * 0.55f;
-                reverbProvider.Intensity = PluginConfig.ReverbIntensity;
-            }
+            Vector3 position = veh.Position;
+            float distance = Vector3.Distance(camPos, position);
+            float range = Math.Max(1f, PluginConfig.MaxDistance - PluginConfig.MinDistance);
+            float normalized = AudioMath.Clamp((distance - PluginConfig.MinDistance) / range, 0f, 1f);
+            float attenuation = (float)Math.Pow(1f - normalized, PluginConfig.FalloffExponent);
+            DistanceReverb = AudioMath.Clamp(distance / (PluginConfig.MaxDistance * 0.4f), 0f, 1f) * 0.55f;
+            ReverbIntensity = PluginConfig.ReverbIntensity;
+            TargetVolume = forceMute ? 0f : AudioMath.Clamp(
+                attenuation * PluginConfig.MasterVolume * perSirenVolume * fade, 0f, 1f);
 
-            volProvider.Volume = MathHelper.Clamp(
-                targetVolume * PluginConfig.MasterVolume * perSirenVolume * fadeMultiplier, 0f, 1f);
-
-            Vector2 dirToSound = new Vector2(sirenPos.X - camPos.X, sirenPos.Y - camPos.Y);
-            if (dirToSound.Length() > 0.01f) dirToSound.Normalize();
-
-            double yawRads = camRot.Z * (Math.PI / 180.0);
-            Vector2 camRight = new Vector2((float)Math.Cos(yawRads), (float)Math.Sin(yawRads));
-            camRight.Normalize();
-
-            panProvider.Pan = MathHelper.Clamp(Vector2.Dot(camRight, dirToSound), -1f, 1f);
-        }
-    }
-
-    public class CachedSound
-    {
-        public float[] AudioData { get; private set; }
-        public WaveFormat WaveFormat { get; private set; }
-
-        public CachedSound(string filePath)
-        {
-            using (var reader = new AudioFileReader(filePath))
-            {
-                WaveFormat = reader.WaveFormat;
-
-                int estimatedSamples = (int)(reader.Length / sizeof(float));
-                AudioData = new float[estimatedSamples];
-
-                var readBuffer = new float[reader.WaveFormat.SampleRate * reader.WaveFormat.Channels];
-                int totalRead = 0;
-                int samplesRead;
-
-                while ((samplesRead = reader.Read(readBuffer, 0, readBuffer.Length)) > 0)
-                {
-                    if (totalRead + samplesRead > AudioData.Length)
-                    {
-                        float[] newArray = new float[(int)((totalRead + samplesRead) * 1.25f)];
-                        Array.Copy(AudioData, newArray, totalRead);
-                        AudioData = newArray;
-                    }
-
-                    Array.Copy(readBuffer, 0, AudioData, totalRead, samplesRead);
-                    totalRead += samplesRead;
-                }
-
-                if (totalRead < AudioData.Length)
-                {
-                    float[] trimmed = new float[totalRead];
-                    Array.Copy(AudioData, trimmed, totalRead);
-                    AudioData = trimmed;
-                }
-            }
-        }
-    }
-
-    public class CachedSampleProvider : ISampleProvider
-    {
-        private readonly CachedSound cachedSound;
-        private long position;
-        private readonly bool loop;
-        public bool IsMuted { get; set; } = false;
-
-        private readonly int xfadeLen;
-
-        public CachedSampleProvider(CachedSound cachedSound, bool loop)
-        {
-            this.cachedSound = cachedSound;
-            this.loop = loop;
-
-            int channels = cachedSound.WaveFormat.Channels;
-            int minLengthForXfade = 512 * channels * 2;
-            xfadeLen = (loop && cachedSound.AudioData.Length > minLengthForXfade)
-                ? 512 * channels
-                : 0;
-        }
-
-        public WaveFormat WaveFormat => cachedSound.WaveFormat;
-
-        public int Read(float[] buffer, int offset, int count)
-        {
-            if (IsMuted)
-            {
-                Array.Clear(buffer, offset, count);
-                return count;
-            }
-
-            int totalLen = cachedSound.AudioData.Length;
-            int xfadeStart = totalLen - xfadeLen;
-            int written = 0;
-
-            while (written < count)
-            {
-                if (position >= totalLen)
-                {
-                    if (!loop) break;
-                    position = xfadeLen;
-                }
-
-                bool inXfade = xfadeLen > 0 && position >= xfadeStart;
-
-                if (inXfade)
-                {
-                    int xPos = (int)(position - xfadeStart);
-                    float t = (float)(xPos + 1) / (xfadeLen + 1);
-                    buffer[offset + written] =
-                        cachedSound.AudioData[position] * (1f - t) +
-                        cachedSound.AudioData[xPos] * t;
-                    position++;
-                    written++;
-                }
-                else
-                {
-                    int ceiling = xfadeLen > 0 ? xfadeStart : totalLen;
-                    int canRead = (int)Math.Min(ceiling - position, count - written);
-                    if (canRead <= 0) { position = xfadeLen; continue; }
-                    Array.Copy(cachedSound.AudioData, position, buffer, offset + written, canRead);
-                    position += canRead;
-                    written += canRead;
-                }
-            }
-
-            return written;
-        }
-    }
-
-    public class CityReverbProvider : ISampleProvider
-    {
-        private readonly ISampleProvider source;
-        private readonly float[] delayLeft1, delayLeft2;
-        private readonly float[] delayRight1, delayRight2;
-        private int posL1, posL2, posR1, posR2;
-
-        public float BaseReverb { get; set; } = 0.12f;
-        public float DistanceReverb { get; set; } = 0f;
-        public float Intensity { get; set; } = 1f;
-
-        public WaveFormat WaveFormat => source.WaveFormat;
-
-        public CityReverbProvider(ISampleProvider source)
-        {
-            this.source = source;
-            int sr = source.WaveFormat.SampleRate;
-
-            delayLeft1 = new float[(int)(sr * 0.137f)];
-            delayLeft2 = new float[(int)(sr * 0.197f)];
-            delayRight1 = new float[(int)(sr * 0.153f)];
-            delayRight2 = new float[(int)(sr * 0.223f)];
-        }
-
-        public int Read(float[] buffer, int offset, int count)
-        {
-            int read = source.Read(buffer, offset, count);
-            float wetLevel = (BaseReverb + DistanceReverb) * Intensity;
-            if (wetLevel > 0.8f) wetLevel = 0.8f;
-
-            for (int i = 0; i < read; i += 2)
-            {
-                if (i + 1 >= read) break;
-
-                float inL = buffer[offset + i];
-                float inR = buffer[offset + i + 1];
-
-                float dL = delayLeft1[posL1] + delayLeft2[posL2];
-                float dR = delayRight1[posR1] + delayRight2[posR2];
-
-                float outL = inL + (dL * 0.65f + dR * 0.28f) * wetLevel;
-                float outR = inR + (dR * 0.65f + dL * 0.28f) * wetLevel;
-
-                buffer[offset + i] = outL;
-                buffer[offset + i + 1] = outR;
-
-                delayLeft1[posL1] = inL + delayLeft1[posL1] * 0.44f;
-                delayLeft2[posL2] = inL + delayLeft2[posL2] * 0.34f;
-                delayRight1[posR1] = inR + delayRight1[posR1] * 0.44f;
-                delayRight2[posR2] = inR + delayRight2[posR2] * 0.34f;
-
-                posL1 = (posL1 + 1) % delayLeft1.Length;
-                posL2 = (posL2 + 1) % delayLeft2.Length;
-                posR1 = (posR1 + 1) % delayRight1.Length;
-                posR2 = (posR2 + 1) % delayRight2.Length;
-            }
-            return read;
+            float dx = position.X - camPos.X;
+            float dy = position.Y - camPos.Y;
+            float length = (float)Math.Sqrt(dx * dx + dy * dy);
+            double yaw = camRot.Z * Math.PI / 180.0;
+            Pan = length > 0.01f
+                ? AudioMath.Clamp((float)(Math.Cos(yaw) * dx + Math.Sin(yaw) * dy) / length, -1f, 1f)
+                : 0f;
         }
     }
 }

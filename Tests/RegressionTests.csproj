@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <Platform Condition="'$(Platform)' == ''">AnyCPU</Platform>
+    <ProjectGuid>{854B19D1-CCDA-4D6D-9B45-463906BD9C61}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <AssemblyName>CustomELSSirens.RegressionTests</AssemblyName>
+    <LangVersion>7.3</LangVersion>
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <Optimize>true</Optimize>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="NAudio"><HintPath>..\dependencies\NAudio.dll</HintPath></Reference>
+    <Reference Include="NAudio.Wasapi"><HintPath>..\dependencies\NAudio.Wasapi.dll</HintPath></Reference>
+    <Reference Include="NAudio.Core"><HintPath>..\dependencies\NAudio.Core.dll</HintPath></Reference>
+    <Reference Include="NAudio.WinMM"><HintPath>..\dependencies\NAudio.WinMM.dll</HintPath></Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\AudioComponents.cs"><Link>AudioComponents.cs</Link></Compile>
+    <Compile Include="..\AudioSamples.cs"><Link>AudioSamples.cs</Link></Compile>
+    <Compile Include="..\AudioEngine.cs"><Link>AudioEngine.cs</Link></Compile>
+    <Compile Include="..\ProfileStore.cs"><Link>ProfileStore.cs</Link></Compile>
+    <Compile Include="..\PluginConfig.cs"><Link>PluginConfig.cs</Link></Compile>
+    <Compile Include="..\PlaybackRules.cs"><Link>PlaybackRules.cs</Link></Compile>
+    <Compile Include="GameStubs.cs" />
+    <Compile Include="RegressionTests.cs" />
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

@@ -1,16 +1,16 @@
-﻿using Rage;
+using Rage;
 using Rage.Native;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Xml;
+using System.Windows.Forms;
 
 namespace CustomELSSirens
 {
     public static class SirenManager
     {
         public static Dictionary<string, CachedSound> cachedSirens = new Dictionary<string, CachedSound>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Dictionary<string, string> _profileCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private static readonly List<Vehicle> _vehicleScratch = new List<Vehicle>();
 
         private static readonly SirenPlayer activeSiren = new SirenPlayer();
@@ -21,42 +21,63 @@ namespace CustomELSSirens
         private static Vehicle currentVehicle = null;
         public static string CurrentVehicleModel = string.Empty;
 
-        private static int maxStage = 3;
-        private static int requiredSirenStage = 3;
+        private static int requiredSirenStage = 2;
         private static bool vehicleProfileExists = false;
 
         private static int activeToneIndex = 0;
         private static bool isAutoScanActive = false;
         private static uint nextScanChangeTime = 0;
 
-        private static bool was1, was2, was3, was4, wasHorn, wasManul, wasScan, wasTonX, wasPnic;
-        private static bool _wasSirenInterrupted = false;
+        private static readonly bool[] wasTone = new bool[ToneSlots.Count];
+        private static bool wasHorn, wasManul, wasScan, wasTonX;
+        private static readonly HornInterruption hornInterruption = new HornInterruption();
+        private static readonly Dictionary<Vehicle, bool> rumblerStates = new Dictionary<Vehicle, bool>();
+        private static bool wasRumbler;
+        private static readonly bool[] wasExtra = new bool[4];
+        private static bool featureInputSuppressed = true;
+        private static readonly Func<Keys, bool> readKey = Game.IsKeyDownRightNow;
         private static uint nextAiScanTime = 0;
         private static readonly Random rnd = new Random();
 
         private static int currentTrackedStage = 0;
         private static bool wasLstKey = false;
 
-        private static readonly Dictionary<string, float> _volumeCache = new Dictionary<string, float>(StringComparer.OrdinalIgnoreCase);
+        private static string manualVolumeKey = "ManualVol";
 
         private static readonly HashSet<string> _elsModelsCache = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         private static bool _elsModelsCached = false;
+        private static readonly Dictionary<string, string> _elsFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         public static void ProcessLoop()
         {
+            bool isPaused = Game.IsPaused || Game.IsLoading || NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>() || Game.TimeScale == 0f;
+            bool isMenuOpen = MenuManager.IsAnyMenuOpen;
+            AudioEngine.SetMuted(isPaused || isMenuOpen);
+            if (isPaused) { featureInputSuppressed = true; return; }
+
             Ped player = Game.LocalPlayer.Character;
-            if (player == null || !player.IsAlive)
+            if (player == null || !player.IsValid() || !player.IsAlive)
             {
-                KillAllSounds(true);
-                KillAllAiSounds(true);
+                KillAllSounds();
+                KillAllAiSounds();
                 return;
             }
 
             bool inVehicle = player.IsInAnyVehicle(false);
             Vehicle veh = inVehicle ? player.CurrentVehicle : currentVehicle;
+            if (inVehicle && (veh == null || !veh.IsValid()))
+            {
+                KillAllSounds();
+                return;
+            }
 
             if (inVehicle && currentVehicle != veh)
             {
+                if (activeAiSirens.TryGetValue(veh, out var previousAi))
+                {
+                    previousAi.Player.Stop(true);
+                    activeAiSirens.Remove(veh);
+                }
                 currentVehicle = veh;
                 CurrentVehicleModel = GetVehicleModelName(veh);
                 activeToneIndex = 0;
@@ -68,14 +89,22 @@ namespace CustomELSSirens
 
                 ResetInputs();
                 ParseVCF(CurrentVehicleModel);
-                _profileCache.Clear();
                 CacheVehicleSirens();
+            }
+
+            if (activeToneIndex != 0 && !activeSiren.IsPlaying && !hornInterruption.IsActive)
+            {
+                activeToneIndex = 0;
+                isAutoScanActive = false;
             }
 
             if (currentVehicle != null && currentVehicle.IsValid() && currentVehicle.IsAlive)
             {
-                string hornProfile = GetProfileSiren(CurrentVehicleModel, "Horn");
-                bool hasCustomHorn = !string.IsNullOrEmpty(hornProfile) && hornProfile != "None";
+                if (inVehicle && !isMenuOpen) HandleVehicleFeatures();
+                else featureInputSuppressed = true;
+
+                string hornProfile = GetLocalSiren("Horn");
+                bool hasCustomHorn = IsSoundAvailable(hornProfile);
 
                 bool isEmergency = currentVehicle.HasSiren ||
                                    currentVehicle.Class == VehicleClass.Emergency ||
@@ -85,27 +114,29 @@ namespace CustomELSSirens
 
                 if (isEmergency)
                 {
-                    if (currentVehicle.HasSiren && hasCustomHorn)
+                    if (inVehicle && currentVehicle.HasSiren && hasCustomHorn)
                     {
                         Game.DisableControlAction(0, GameControl.VehicleHorn, true);
                     }
 
                     bool isLightsOn = IsVehicleLightsOn(currentVehicle);
 
-                    if (inVehicle)
+                    if (inVehicle && !isMenuOpen)
                     {
                         HandleInputs(currentVehicle, isLightsOn);
+                        isLightsOn = IsVehicleLightsOn(currentVehicle);
                     }
                     else
                     {
-                        if (activeHorn.IsPlaying) activeHorn.Stop(false);
+                        if (activeHorn.IsPlaying) activeHorn.Stop(true);
                         if (activeManual.IsPlaying) activeManual.Stop(false);
 
                         wasHorn = false;
                         wasManul = false;
 
-                        bool hasNoDriver = currentVehicle.Driver == null || !currentVehicle.Driver.IsValid();
-                        bool isDriverDead = !hasNoDriver && !currentVehicle.Driver.IsAlive;
+                        Ped driver = currentVehicle.Driver;
+                        bool hasNoDriver = driver == null || !driver.IsValid();
+                        bool isDriverDead = !hasNoDriver && !driver.IsAlive;
 
                         if (isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff))
                         {
@@ -117,6 +148,9 @@ namespace CustomELSSirens
                             }
                         }
                     }
+
+                    if (!inVehicle || isMenuOpen)
+                        hornInterruption.Update(false, PluginConfig.HornInterruptsSiren, () => activeSiren.Stop(true), RestartAfterHorn);
 
                     if (!isLightsOn && activeToneIndex != 0)
                     {
@@ -135,16 +169,7 @@ namespace CustomELSSirens
                 KillAllSounds();
             }
 
-            bool isPaused = Game.IsPaused || Game.IsLoading || NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>() || Game.TimeScale == 0f;
-
-            if (isPaused)
             {
-                DropVolumes();
-            }
-            else
-            {
-                bool isMenuOpen = (MenuManager.MainMenu != null && MenuManager.MainMenu.Visible) ||
-                                  (MenuManager.SettingsMenu != null && MenuManager.SettingsMenu.Visible);
                 bool shouldMuteAll = isMenuOpen;
 
                 Vector3 camPos = NativeFunction.Natives.GET_GAMEPLAY_CAM_COORD<Vector3>();
@@ -152,11 +177,13 @@ namespace CustomELSSirens
 
                 if (currentVehicle != null && currentVehicle.IsValid() && currentVehicle.IsAlive)
                 {
-                    bool isHornActive = wasHorn || (activeHorn.IsPlaying && !activeHorn.IsFadingOut);
-                    bool isManualActive = wasManul || (activeManual.IsPlaying && !activeManual.IsFadingOut);
+                    bool isManualActive = activeManual.IsPlaying && !activeManual.IsFadingOut;
 
-                    bool sirenForceMute = shouldMuteAll || isManualActive || (PluginConfig.HornInterruptsSiren && isHornActive);
+                    bool sirenForceMute = shouldMuteAll || isManualActive;
 
+                    if (activeToneIndex != 0) activeSiren.SetSirenVolume(GetLocalVolume($"Tone{activeToneIndex}Vol"));
+                    activeHorn.SetSirenVolume(GetLocalVolume("HornVol"));
+                    activeManual.SetSirenVolume(GetLocalVolume(manualVolumeKey));
                     activeSiren.Update3D(currentVehicle, camPos, camRot, sirenForceMute);
                     activeHorn.Update3D(currentVehicle, camPos, camRot, shouldMuteAll);
                     activeManual.Update3D(currentVehicle, camPos, camRot, shouldMuteAll);
@@ -165,7 +192,7 @@ namespace CustomELSSirens
                 UpdateActiveAiSirens(camPos, camRot, shouldMuteAll);
             }
 
-            if (Game.GameTime >= nextAiScanTime)
+            if (TimeReached(Game.GameTime, nextAiScanTime))
             {
                 nextAiScanTime = Game.GameTime + (uint)PluginConfig.AiScanInterval;
                 ScanForAiVehicles();
@@ -175,7 +202,7 @@ namespace CustomELSSirens
         private static bool IsEmergencyModelName(string modelName)
         {
             if (string.IsNullOrEmpty(modelName)) return false;
-            string lower = modelName.ToLower();
+            string lower = modelName.ToLowerInvariant();
             return lower.Contains("police") ||
                    lower.Contains("sheriff") ||
                    lower.Contains("fbi") ||
@@ -197,24 +224,20 @@ namespace CustomELSSirens
 
         private static void ResetInputs()
         {
-            was1 = was2 = was3 = was4 = wasHorn = wasManul = wasScan = wasTonX = wasPnic = false;
-            _wasSirenInterrupted = false;
+            Array.Clear(wasTone, 0, wasTone.Length);
+            wasHorn = wasManul = wasScan = wasTonX = false;
+            hornInterruption.Reset();
+            featureInputSuppressed = true;
+            wasRumbler = false;
+            Array.Clear(wasExtra, 0, wasExtra.Length);
 
             currentTrackedStage = 0;
             wasLstKey = false;
         }
 
-        public static void DropVolumes()
-        {
-            activeSiren.SetVolume(0f);
-            activeHorn.SetVolume(0f);
-            activeManual.SetVolume(0f);
+        internal static bool TimeReached(uint now, uint deadline) => unchecked((int)(now - deadline)) >= 0;
 
-            foreach (var ai in activeAiSirens.Values)
-            {
-                ai.Player.SetVolume(0f);
-            }
-        }
+        public static void DropVolumes() => AudioEngine.SetMuted(true);
 
         public static void Shutdown()
         {
@@ -227,21 +250,23 @@ namespace CustomELSSirens
             activeAiSirens.Clear();
 
             cachedSirens.Clear();
-            _profileCache.Clear();
-            _volumeCache.Clear();
+            rumblerStates.Clear();
+            ProfileStore.Clear();
             _vehicleScratch.Clear();
 
-            Game.Console.Print("[CustomSirens] Unloaded – all audio resources released.");
+            AudioEngine.Shutdown();
+            Game.Console.Print("[CustomSirens] Unloaded.");
         }
 
-        private static void KillAllSounds(bool dropInstantly = false)
+        private static void KillAllSounds()
         {
-            if (activeSiren.IsPlaying) activeSiren.Stop(dropInstantly);
-            if (activeHorn.IsPlaying) activeHorn.Stop(dropInstantly);
-            if (activeManual.IsPlaying) activeManual.Stop(dropInstantly);
+            if (activeSiren.IsPlaying) activeSiren.Stop(true);
+            if (activeHorn.IsPlaying) activeHorn.Stop(true);
+            if (activeManual.IsPlaying) activeManual.Stop(true);
             activeToneIndex = 0;
             isAutoScanActive = false;
             currentVehicle = null;
+            CurrentVehicleModel = string.Empty;
             ResetInputs();
         }
 
@@ -255,44 +280,26 @@ namespace CustomELSSirens
             ResetInputs();
         }
 
-        private static void KillAllAiSounds(bool dropInstantly = false)
+        private static void KillAllAiSounds()
         {
-            foreach (var p in activeAiSirens.Values) p.Player.Stop(dropInstantly);
+            foreach (var p in activeAiSirens.Values) p.Player.Stop(true);
             activeAiSirens.Clear();
         }
 
         private static void ParseVCF(string modelName)
         {
-            requiredSirenStage = 3;
-            maxStage = 1;
-
-            if (!Directory.Exists("ELS")) return;
-            string[] files = Directory.GetFiles("ELS", $"{modelName}.xml", SearchOption.AllDirectories);
-            if (files.Length == 0) return;
-
+            requiredSirenStage = 2;
+            CacheElsModels();
+            if (!_elsFiles.TryGetValue(modelName, out var path)) return;
             try
             {
-                XmlDocument doc = new XmlDocument();
-                doc.Load(files[0]);
-
-                XmlNode sirenNode = doc.SelectSingleNode("//MISC/DfltSirenLtsActivateAtLstg");
-                if (sirenNode != null) int.TryParse(sirenNode.InnerText, out requiredSirenStage);
-
-                string[] sections = { "PRML", "WRNL", "SECL" };
-                foreach (var sec in sections)
-                {
-                    for (int i = 3; i >= 1; i--)
-                    {
-                        XmlNode node = doc.SelectSingleNode($"//{sec}/PresetPatterns/Lstg{i}");
-                        if (node?.Attributes?["Enabled"] != null &&
-                            node.Attributes["Enabled"].Value.Equals("true", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (i > maxStage) maxStage = i;
-                        }
-                    }
-                }
+                var doc = new XmlDocument { XmlResolver = null };
+                doc.Load(path);
+                var node = doc.SelectSingleNode("//MISC/DfltSirenLtsActivateAtLstg");
+                if (node != null && int.TryParse(node.InnerText, out int stage) && stage >= 1 && stage <= 3)
+                    requiredSirenStage = stage;
             }
-            catch { }
+            catch (Exception ex) { Game.Console.Print("[CustomSirens] Cannot read VCF: " + ex.Message); }
         }
 
         private static string GetVehicleModelName(Vehicle veh)
@@ -306,13 +313,14 @@ namespace CustomELSSirens
                 name = $"0x{veh.Model.Hash:X8}";
             }
 
-            return name.ToUpper();
+            return name.ToUpperInvariant();
         }
 
         private static void CacheElsModels()
         {
             if (_elsModelsCached) return;
             _elsModelsCache.Clear();
+            _elsFiles.Clear();
 
             if (Directory.Exists("ELS"))
             {
@@ -320,7 +328,9 @@ namespace CustomELSSirens
                 foreach (string file in files)
                 {
                     if (file.IndexOf("Original VCF Backups", StringComparison.OrdinalIgnoreCase) >= 0) continue;
-                    _elsModelsCache.Add(Path.GetFileNameWithoutExtension(file));
+                    string model = Path.GetFileNameWithoutExtension(file);
+                    _elsModelsCache.Add(model);
+                    if (!_elsFiles.ContainsKey(model)) _elsFiles[model] = file;
                 }
             }
             _elsModelsCached = true;
@@ -332,116 +342,33 @@ namespace CustomELSSirens
             return _elsModelsCache.Contains(modelName);
         }
 
-        private static bool GetVehicleLightRestriction(string modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return PluginConfig.SirenLightRestriction;
-
-            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
-            if (File.Exists(vehIni))
-            {
-                InitializationFile vIni = new InitializationFile(vehIni);
-                return vIni.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
-            }
-
-            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
-            if (File.Exists(globalIniPath))
-            {
-                InitializationFile gIni = new InitializationFile(globalIniPath);
-                return gIni.ReadBoolean("Settings", "SirenLightRestriction", PluginConfig.SirenLightRestriction);
-            }
-
-            return PluginConfig.SirenLightRestriction;
-        }
-
-        private static bool GetVehicleLightStageTracking(string modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return PluginConfig.EnableLightStageTracking;
-
-            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
-            if (File.Exists(vehIni))
-            {
-                InitializationFile vIni = new InitializationFile(vehIni);
-                return vIni.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking);
-            }
-
-            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
-            if (File.Exists(globalIniPath))
-            {
-                InitializationFile gIni = new InitializationFile(globalIniPath);
-                return gIni.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking);
-            }
-
-            return PluginConfig.EnableLightStageTracking;
-        }
-
-        private static int GetVehicleCustomStageAmount(string modelName)
-        {
-            if (string.IsNullOrEmpty(modelName)) return PluginConfig.CustomLightStageAmount;
-
-            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
-            if (File.Exists(vehIni))
-            {
-                InitializationFile vIni = new InitializationFile(vehIni);
-                return vIni.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount);
-            }
-
-            string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
-            if (File.Exists(globalIniPath))
-            {
-                InitializationFile gIni = new InitializationFile(globalIniPath);
-                return gIni.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount);
-            }
-
-            return PluginConfig.CustomLightStageAmount;
-        }
+        private static bool GetVehicleLightRestriction(string modelName) => ProfileStore.Get(modelName).LightRestriction;
+        private static bool GetVehicleLightStageTracking(string modelName) => ProfileStore.Get(modelName).StageTracking;
+        private static int GetVehicleCustomStageAmount(string modelName) => ProfileStore.Get(modelName).StageCount;
 
         public static float GetVehicleVolume(string modelName, string key, float defaultVal)
         {
-            if (string.IsNullOrEmpty(modelName)) return defaultVal;
-
-            string cacheKey = modelName + "|" + key;
-            if (_volumeCache.TryGetValue(cacheKey, out float cachedVol))
-            {
-                return cachedVol;
-            }
-
-            float result = defaultVal;
-            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
-
-            if (File.Exists(vehIni))
-            {
-                InitializationFile vIni = new InitializationFile(vehIni);
-                result = vIni.ReadSingle("SirenVolumes", key, defaultVal);
-            }
-            else
-            {
-                string globalIniPath = $@"{PluginConfig.ProfilesFolder}Global.ini";
-                if (File.Exists(globalIniPath))
-                {
-                    InitializationFile gIni = new InitializationFile(globalIniPath);
-                    result = gIni.ReadSingle("SirenVolumes", key, defaultVal);
-                }
-            }
-
-            _volumeCache[cacheKey] = result;
-            return result;
+            return ProfileStore.Get(modelName).Volumes.TryGetValue(key, out float volume) ? volume : defaultVal;
         }
 
-        public static void UpdateCachedVolume(string modelName, string key, float value)
-        {
-            if (string.IsNullOrEmpty(modelName)) return;
-            string cacheKey = modelName + "|" + key;
-            _volumeCache[cacheKey] = value;
-        }
+        public static void UpdateCachedVolume(string modelName, string key, float value, bool rumbler = false) => ProfileStore.SetVolume(modelName, key, value, rumbler);
 
         private static void HandleInputs(Vehicle veh, bool isLightsOn)
         {
+            bool isHornPressed = NativeFunction.Natives.IS_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn) ||
+                                 NativeFunction.Natives.IS_DISABLED_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn);
+            if (isHornPressed && !wasHorn) PlayHorn();
+            else if (!isHornPressed && wasHorn) activeHorn.Stop(true);
+            wasHorn = isHornPressed;
+            hornInterruption.Update(isHornPressed, PluginConfig.HornInterruptsSiren, () => activeSiren.Stop(true), RestartAfterHorn);
+
+
             bool enableTracking = GetVehicleLightStageTracking(CurrentVehicleModel);
             if (enableTracking)
             {
                 int maxStages = GetVehicleCustomStageAmount(CurrentVehicleModel);
 
-                bool isLstKey = Game.IsKeyDownRightNow(PluginConfig.Toggle_Lsts) ||
+                bool isLstKey = IsKeyDown(PluginConfig.Toggle_Lsts) ||
                                  (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(ControllerButtons.DPadLeft));
 
                 if (isLstKey && !wasLstKey)
@@ -454,52 +381,17 @@ namespace CustomELSSirens
                     Game.Console.Print($"[CustomSirens] Local Light Stage changed to: {currentTrackedStage} / {maxStages}");
                 }
                 wasLstKey = isLstKey;
+                isLightsOn = IsVehicleLightsOn(veh);
             }
 
-            CheckToneKey(PluginConfig.Snd_SrnTon1, ref was1, 1, isLightsOn);
-            CheckToneKey(PluginConfig.Snd_SrnTon2, ref was2, 2, isLightsOn);
-            CheckToneKey(PluginConfig.Snd_SrnTon3, ref was3, 3, isLightsOn);
-            CheckToneKey(PluginConfig.Snd_SrnTon4, ref was4, 4, isLightsOn);
+            for (int i = 0; i < ToneSlots.Count; i++) CheckToneKey(PluginConfig.GetToneKey(i + 1), ref wasTone[i], i + 1, isLightsOn);
 
-            bool isManulPressed = Game.IsKeyDownRightNow(PluginConfig.Sound_Manul) ||
+            bool isManulPressed = IsKeyDown(PluginConfig.Sound_Manul) ||
                                   (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_Manul));
 
             if (isManulPressed && !wasManul)
             {
-                string manualPath = GetProfileSiren(CurrentVehicleModel, "Manual");
-                bool hasCustomManual = !string.IsNullOrEmpty(manualPath) && manualPath != "None" && File.Exists(manualPath);
-
-                int toneToPlay = 1;
-                if (!hasCustomManual)
-                {
-                    if (activeToneIndex == 0) toneToPlay = 1;
-                    else if (activeToneIndex == 1) toneToPlay = 2;
-                    else if (activeToneIndex == 2) toneToPlay = 3;
-                    else if (activeToneIndex == 3) toneToPlay = 4;
-                    else if (activeToneIndex == 4) toneToPlay = 1;
-
-                    bool found = false;
-                    for (int i = 0; i < 4; i++)
-                    {
-                        string p = GetProfileSiren(CurrentVehicleModel, $"Tone{toneToPlay}");
-                        if (!string.IsNullOrEmpty(p) && p != "None" && File.Exists(p))
-                        {
-                            found = true;
-                            break;
-                        }
-                        toneToPlay++;
-                        if (toneToPlay > 4) toneToPlay = 1;
-                    }
-
-                    if (found) manualPath = GetProfileSiren(CurrentVehicleModel, $"Tone{toneToPlay}");
-                }
-
-                if (!string.IsNullOrEmpty(manualPath) && manualPath != "None" && File.Exists(manualPath))
-                {
-                    CachedSound sound = GetCachedSound(manualPath);
-                    if (sound != null)
-                        activeManual.Play(sound, true, hasCustomManual ? PluginConfig.ManualVol : GetPerSirenVolume(CurrentVehicleModel, $"Tone{toneToPlay}Vol"));
-                }
+                PlayManual();
             }
             else if (!isManulPressed && wasManul)
             {
@@ -507,7 +399,7 @@ namespace CustomELSSirens
             }
             wasManul = isManulPressed;
 
-            bool isScanPressed = Game.IsKeyDownRightNow(PluginConfig.Snd_SrnScan) ||
+            bool isScanPressed = IsKeyDown(PluginConfig.Snd_SrnScan) ||
                                  (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_SrnToggle));
 
             if (isScanPressed && !wasScan)
@@ -525,8 +417,8 @@ namespace CustomELSSirens
                         isAutoScanActive = true;
                         activeToneIndex = 1;
 
-                        string path = GetProfileSiren(CurrentVehicleModel, "Tone1");
-                        if (string.IsNullOrEmpty(path) || path == "None" || !File.Exists(path))
+                        string path = GetLocalSiren("Tone1");
+                        if (!IsSoundAvailable(path))
                             AdvanceToNextValidTone(ref activeToneIndex);
 
                         PlayCurrentTone();
@@ -540,17 +432,18 @@ namespace CustomELSSirens
             }
             wasScan = isScanPressed;
 
-            if (isAutoScanActive && activeToneIndex != 0)
+            if (isAutoScanActive && activeToneIndex != 0 && !hornInterruption.IsActive)
             {
-                if (Game.GameTime > nextScanChangeTime)
+                if (TimeReached(Game.GameTime, nextScanChangeTime))
                 {
+                    int previousTone = activeToneIndex;
                     AdvanceToNextValidTone(ref activeToneIndex);
-                    PlayCurrentTone();
+                    if (activeToneIndex != previousTone) PlayCurrentTone();
                     nextScanChangeTime = Game.GameTime + 6000;
                 }
             }
 
-            bool isTonX = Game.IsKeyDownRightNow(PluginConfig.Snd_SrnTonX) ||
+            bool isTonX = IsKeyDown(PluginConfig.Snd_SrnTonX) ||
                           (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_SrnTonX));
 
             if (isTonX && !wasTonX)
@@ -564,68 +457,60 @@ namespace CustomELSSirens
             }
             wasTonX = isTonX;
 
-            bool isPnic = Game.IsKeyDownRightNow(PluginConfig.Snd_SrnPnic);
-            wasPnic = isPnic;
-
-            bool isHornPressed = NativeFunction.Natives.IS_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn) ||
-                                 NativeFunction.Natives.IS_DISABLED_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn);
-
-            if (isHornPressed && !wasHorn)
-            {
-                string path = GetProfileSiren(CurrentVehicleModel, "Horn");
-                if (!string.IsNullOrEmpty(path) && path != "None" && File.Exists(path))
-                {
-                    CachedSound sound = GetCachedSound(path);
-                    if (sound != null)
-                        activeHorn.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, "HornVol"));
-                }
-            }
-            else if (!isHornPressed && wasHorn)
-            {
-                activeHorn.Stop(false);
-            }
-            wasHorn = isHornPressed;
-
-            bool isHornActive = wasHorn || (activeHorn.IsPlaying && !activeHorn.IsFadingOut);
-            bool isManualActive = wasManul || (activeManual.IsPlaying && !activeManual.IsFadingOut);
-            bool isInterruptedNow = isManualActive || (PluginConfig.HornInterruptsSiren && isHornActive);
-
-            if (!isInterruptedNow && _wasSirenInterrupted && activeToneIndex != 0)
-            {
-                PlayCurrentTone();
-            }
-
-            _wasSirenInterrupted = isInterruptedNow;
         }
 
         private static void AdvanceToNextValidTone(ref int toneIndex)
         {
-            int startIdx = toneIndex == 0 ? 1 : toneIndex;
-            int nextIdx = startIdx;
-            for (int i = 0; i < 4; i++)
-            {
-                nextIdx++;
-                if (nextIdx > 4) nextIdx = 1;
-                string path = GetProfileSiren(CurrentVehicleModel, $"Tone{nextIdx}");
-                if (!string.IsNullOrEmpty(path) && path != "None" && File.Exists(path))
-                {
-                    toneIndex = nextIdx;
-                    return;
-                }
-            }
+            toneIndex = ToneSlots.Next(toneIndex, index => IsSoundAvailable(GetLocalSiren(ToneSlots.Keys[index - 1])));
+        }
+
+        private static void RestartAfterHorn()
+        {
+            PlayCurrentTone();
+            if (isAutoScanActive) nextScanChangeTime = Game.GameTime + 6000;
         }
 
         private static void PlayCurrentTone()
         {
-            string path = GetProfileSiren(CurrentVehicleModel, $"Tone{activeToneIndex}");
-            CachedSound sound = GetCachedSound(path);
-            if (sound != null)
-                activeSiren.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, $"Tone{activeToneIndex}Vol"));
+            if (activeToneIndex == 0)
+            {
+                isAutoScanActive = false;
+                activeSiren.Stop(true);
+                return;
+            }
+            if (hornInterruption.IsActive) { activeSiren.Stop(true); return; }
+            var sound = GetCachedSound(GetLocalSiren(ToneSlots.Keys[activeToneIndex - 1]));
+            if (sound != null) activeSiren.Play(sound, true, GetLocalVolume($"Tone{activeToneIndex}Vol"));
+            else
+            {
+                activeSiren.Stop(true);
+                activeToneIndex = 0;
+                isAutoScanActive = false;
+            }
+        }
+
+        private static void PlayHorn()
+        {
+            activeHorn.Play(GetCachedSound(GetLocalSiren("Horn")), true, GetLocalVolume("HornVol"));
+        }
+
+        private static void PlayManual()
+        {
+            string path = GetLocalSiren("Manual");
+            manualVolumeKey = "ManualVol";
+            if (!IsSoundAvailable(path))
+            {
+                int next = ToneSlots.Next(activeToneIndex, index => IsSoundAvailable(GetLocalSiren(ToneSlots.Keys[index - 1])));
+                if (next == 0) { activeManual.Stop(true); return; }
+                path = GetLocalSiren(ToneSlots.Keys[next - 1]);
+                manualVolumeKey = $"Tone{next}Vol";
+            }
+            activeManual.Play(GetCachedSound(path), true, GetLocalVolume(manualVolumeKey));
         }
 
         private static void CheckToneKey(System.Windows.Forms.Keys key, ref bool wasKey, int toneIndex, bool isLightsOn)
         {
-            bool isKey = Game.IsKeyDownRightNow(key);
+            bool isKey = IsKeyDown(key);
             if (isKey && !wasKey)
             {
                 if (!isLightsOn)
@@ -634,9 +519,9 @@ namespace CustomELSSirens
                 }
                 else
                 {
-                    string path = GetProfileSiren(CurrentVehicleModel, $"Tone{toneIndex}");
+                    string path = GetLocalSiren($"Tone{toneIndex}");
 
-                    if (string.IsNullOrEmpty(path) || path == "None" || !File.Exists(path))
+                    if (!IsSoundAvailable(path))
                     {
                         wasKey = isKey;
                         return;
@@ -658,89 +543,135 @@ namespace CustomELSSirens
                     {
                         isAutoScanActive = false;
                         activeToneIndex = toneIndex;
-                        CachedSound sound = GetCachedSound(path);
-                        if (sound != null)
-                            activeSiren.Play(sound, true, GetPerSirenVolume(CurrentVehicleModel, $"Tone{toneIndex}Vol"));
+                        PlayCurrentTone();
                     }
                 }
             }
             wasKey = isKey;
         }
 
-        private static float GetPerSirenVolume(string modelName, string configKey)
+        private static bool IsKeyDown(Keys key) => KeyBindings.IsDown(key, readKey);
+
+        private static float GetPerSirenVolume(string modelName, string key, bool rumbler = false)
+            => ProfileStore.Get(modelName).GetVolume(key, rumbler);
+        private static float GetLocalVolume(string key)
+            => GetPerSirenVolume(CurrentVehicleModel, key, CurrentRumblerActive);
+        private static string GetProfileSiren(string modelName, string key, bool rumbler = false)
+            => string.IsNullOrEmpty(modelName) ? "None" : ProfileStore.Get(modelName).GetSound(key, rumbler);
+        private static string GetLocalSiren(string key)
+            => GetProfileSiren(CurrentVehicleModel, key, CurrentRumblerActive);
+
+        internal static bool CanControlCurrentVehicle
         {
-            float fallback = 1.0f;
-            switch (configKey)
+            get
             {
-                case "Tone1Vol": fallback = PluginConfig.Tone1Vol; break;
-                case "Tone2Vol": fallback = PluginConfig.Tone2Vol; break;
-                case "Tone3Vol": fallback = PluginConfig.Tone3Vol; break;
-                case "Tone4Vol": fallback = PluginConfig.Tone4Vol; break;
-                case "HornVol": fallback = PluginConfig.HornVol; break;
-                case "ManualVol": fallback = PluginConfig.ManualVol; break;
+                Ped player = Game.LocalPlayer.Character;
+                return player != null && player.IsValid() && player.IsAlive && currentVehicle != null && currentVehicle.IsValid() && currentVehicle.IsAlive &&
+                    player.IsInAnyVehicle(false) && player.CurrentVehicle == currentVehicle;
             }
-            return GetVehicleVolume(modelName, configKey, fallback);
+        }
+        internal static bool CurrentRumblerActive => GetRumblerState(currentVehicle, CurrentVehicleModel);
+        internal static bool CurrentRumblerAvailable => CanControlCurrentVehicle && ProfileStore.Get(CurrentVehicleModel).RumblerEnabled;
+        private static bool GetRumblerState(Vehicle vehicle, string model)
+            => vehicle != null && !string.IsNullOrEmpty(model) && ProfileStore.Get(model).RumblerEnabled &&
+                rumblerStates.TryGetValue(vehicle, out bool enabled) && enabled;
+
+        internal static bool SetCurrentRumbler(bool enabled)
+        {
+            if (!CanControlCurrentVehicle || (enabled && !CurrentRumblerAvailable)) return false;
+            if (enabled == CurrentRumblerActive) return true;
+            rumblerStates[currentVehicle] = enabled;
+            if (activeToneIndex != 0) PlayCurrentTone();
+            if (activeHorn.IsPlaying && !activeHorn.IsFadingOut) PlayHorn();
+            if (activeManual.IsPlaying && !activeManual.IsFadingOut) PlayManual();
+            Game.DisplayNotification(enabled ? "~b~Rumbler ON" : "~w~Rumbler OFF");
+            return true;
         }
 
-        private static string GetProfileSiren(string modelName, string key)
+        private static void HandleVehicleFeatures()
         {
-            if (string.IsNullOrEmpty(modelName)) return "None";
-
-            string cacheKey = modelName + "|" + key;
-            if (_profileCache.TryGetValue(cacheKey, out string cached)) return cached;
-
-            string result;
-            string vehIni = $@"{PluginConfig.ProfilesFolder}{modelName}.ini";
-
-            if (File.Exists(vehIni))
+            var profile = ProfileStore.Get(CurrentVehicleModel);
+            bool rumblerDown = IsKeyDown(profile.RumblerKey);
+            if (!featureInputSuppressed && rumblerDown && !wasRumbler && profile.RumblerEnabled)
+                SetCurrentRumbler(!CurrentRumblerActive);
+            wasRumbler = rumblerDown;
+            // Resolve all edges before acting: a duplicate key has one stable
+            // action instead of repeatedly switching between text modes.
+            int requestedExtra = -1;
+            for (int i = 0; i < wasExtra.Length; i++)
             {
-                InitializationFile vIni = new InitializationFile(vehIni);
-                string file = vIni.ReadString("Sirens", key, "None");
-                result = (file != "None" && File.Exists(PluginConfig.WavFolder + file)) ? PluginConfig.WavFolder + file : "None";
+                bool down = IsKeyDown(profile.ExtraKeys[i]);
+                if (!featureInputSuppressed && down && !wasExtra[i] && profile.Extras[i] >= 0 && requestedExtra < 0)
+                    requestedExtra = i;
+                wasExtra[i] = down;
             }
-            else
+            featureInputSuppressed = false;
+            if (requestedExtra >= 0)
             {
-                InitializationFile gIni = new InitializationFile($@"{PluginConfig.ProfilesFolder}Global.ini");
-                string gFile = gIni.ReadString("Sirens", key, "None");
-                result = (gFile != "None" && File.Exists(PluginConfig.WavFolder + gFile)) ? PluginConfig.WavFolder + gFile : "None";
+                if (!ExtraControls.Toggle(new NativeVehicleExtras(currentVehicle), profile.Extras, requestedExtra))
+                    Game.DisplayNotification("~y~" + ExtraControls.Labels[requestedExtra] + ": the configured extra does not exist on this vehicle.");
             }
+        }
 
-            _profileCache[cacheKey] = result;
-            return result;
+        private static bool IsSoundAvailable(string path)
+        {
+            return !string.IsNullOrEmpty(path) && !path.Equals("None", StringComparison.OrdinalIgnoreCase) &&
+                (!cachedSirens.TryGetValue(path, out var sound) || !sound.Failed);
         }
 
         public static CachedSound GetCachedSound(string path)
         {
-            if (string.IsNullOrEmpty(path) || path == "None" || !File.Exists(path)) return null;
-
-            if (!cachedSirens.TryGetValue(path, out CachedSound sound))
+            if (!IsSoundAvailable(path)) return null;
+            if (!cachedSirens.TryGetValue(path, out var sound))
             {
-                try
-                {
-                    sound = new CachedSound(path);
-                    cachedSirens[path] = sound;
-                }
-                catch (Exception ex)
-                {
-                    Game.Console.Print($"[CustomSirens] RAM Caching Failed for {path}: {ex.Message}");
-                    return null;
-                }
+                sound = new CachedSound(path);
+                cachedSirens[path] = sound;
             }
             return sound;
         }
 
         public static void ClearProfileCache()
         {
-            _profileCache.Clear();
-            _volumeCache.Clear();
+            ProfileStore.Clear();
+            if (!string.IsNullOrEmpty(CurrentVehicleModel))
+                vehicleProfileExists = ProfileStore.Get(CurrentVehicleModel).HasOwnProfile;
+        }
+
+        public static void ReloadAudio()
+        {
+            StopAllLocalSounds(true);
+            KillAllAiSounds();
+            cachedSirens.Clear();
+            AudioEngine.ClearCache();
+            ClearProfileCache();
+            CacheVehicleSirens();
+            nextAiScanTime = Game.GameTime;
+        }
+
+        public static void ReloadProfiles()
+        {
+            // Apply changed tone selections without leaving old WAVs playing.
+            StopAllLocalSounds(true);
+            KillAllAiSounds();
+            ClearProfileCache();
+            CacheVehicleSirens();
+            _elsModelsCached = false;
+            if (!string.IsNullOrEmpty(CurrentVehicleModel)) ParseVCF(CurrentVehicleModel);
+            nextAiScanTime = Game.GameTime;
         }
 
         public static void CacheVehicleSirens()
         {
-            vehicleProfileExists = File.Exists($@"{PluginConfig.ProfilesFolder}{CurrentVehicleModel}.ini");
-
-            foreach (var key in new[] { "Tone1", "Tone2", "Tone3", "Tone4", "Horn", "Manual" })
-                GetCachedSound(GetProfileSiren(CurrentVehicleModel, key));
+            if (string.IsNullOrEmpty(CurrentVehicleModel)) return;
+            var profile = ProfileStore.Get(CurrentVehicleModel);
+            vehicleProfileExists = profile.HasOwnProfile;
+            if (!profile.RumblerEnabled && currentVehicle != null) rumblerStates.Remove(currentVehicle);
+            foreach (string key in ProfileStore.SoundKeys)
+            {
+                AudioEngine.Preload(GetCachedSound(GetProfileSiren(CurrentVehicleModel, key, false)));
+                if (profile.RumblerEnabled)
+                    AudioEngine.Preload(GetCachedSound(GetProfileSiren(CurrentVehicleModel, key, true)));
+            }
         }
 
         private static bool IsVehicleLightsOn(Vehicle veh)
@@ -751,6 +682,7 @@ namespace CustomELSSirens
 
             if (veh == currentVehicle)
             {
+                if (!GetVehicleLightRestriction(modelName)) return true;
                 bool enableTracking = GetVehicleLightStageTracking(modelName);
                 if (enableTracking)
                 {
@@ -767,7 +699,7 @@ namespace CustomELSSirens
             if (NativeFunction.Natives.DECOR_EXIST_ON<bool>(veh, "ELS_lightstage"))
             {
                 int stage = NativeFunction.Natives.DECOR_GET_INT<int>(veh, "ELS_lightstage");
-                if (stage >= 2) return true;
+                if (stage >= (veh == currentVehicle ? requiredSirenStage : 2)) return true;
             }
 
             return false;
@@ -777,12 +709,17 @@ namespace CustomELSSirens
         {
             if (Game.LocalPlayer.Character == null) return;
             Vector3 playerPos = Game.LocalPlayer.Character.Position;
+            _vehicleScratch.Clear();
+            foreach (var pair in rumblerStates)
+                if (!pair.Key.IsValid() || !pair.Key.IsAlive) _vehicleScratch.Add(pair.Key);
+            foreach (Vehicle vehicle in _vehicleScratch) rumblerStates.Remove(vehicle);
 
             _vehicleScratch.Clear();
             foreach (var kvp in activeAiSirens)
             {
-                if (!kvp.Key.IsValid() || !kvp.Key.IsAlive ||
-                    Vector3.Distance(playerPos, kvp.Key.Position) > PluginConfig.MaxDistance)
+                if (!kvp.Key.IsValid() || !kvp.Key.IsAlive || kvp.Key == currentVehicle ||
+                    Vector3.Distance(playerPos, kvp.Key.Position) > PluginConfig.MaxDistance ||
+                    activeAiSirens.Count - _vehicleScratch.Count > PluginConfig.MaxAiUnits)
                     _vehicleScratch.Add(kvp.Key);
             }
             foreach (var v in _vehicleScratch)
@@ -791,22 +728,24 @@ namespace CustomELSSirens
                 activeAiSirens.Remove(v);
             }
 
+            if (activeAiSirens.Count >= PluginConfig.MaxAiUnits) return;
             Vehicle[] allVehicles = World.GetAllVehicles();
             foreach (Vehicle v in allVehicles)
             {
                 if (activeAiSirens.Count >= PluginConfig.MaxAiUnits) break;
-                if (!v.IsValid() || !v.IsAlive || v == currentVehicle) continue;
+                if (v == null || !v.IsValid() || !v.IsAlive || v == currentVehicle) continue;
                 if (activeAiSirens.ContainsKey(v)) continue;
+
+                if (Vector3.Distance(playerPos, v.Position) > PluginConfig.MaxDistance) continue;
 
                 string modelName = GetVehicleModelName(v);
 
                 bool isEmergency = v.HasSiren || v.Class == VehicleClass.Emergency || IsElsVehicle(modelName);
                 if (!isEmergency) continue;
 
-                if (Vector3.Distance(playerPos, v.Position) > PluginConfig.MaxDistance) continue;
-
-                bool hasNoDriver = v.Driver == null || !v.Driver.IsValid();
-                bool isDriverDead = !hasNoDriver && !v.Driver.IsAlive;
+                Ped driver = v.Driver;
+                bool hasNoDriver = driver == null || !driver.IsValid();
+                bool isDriverDead = !hasNoDriver && !driver.IsAlive;
 
                 if (isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff))
                 {
@@ -817,17 +756,22 @@ namespace CustomELSSirens
 
                 if (isCode3)
                 {
-                    string path = GetProfileSiren(modelName, "Tone1");
+                    bool rumbler = GetRumblerState(v, modelName);
+                    int firstTone = ToneSlots.Next(0, tone => IsSoundAvailable(GetProfileSiren(modelName, ToneSlots.Keys[tone - 1], rumbler)));
+                    if (firstTone == 0) continue;
+                    string path = GetProfileSiren(modelName, $"Tone{firstTone}", rumbler);
                     CachedSound sound = GetCachedSound(path);
                     if (sound != null)
                     {
                         SirenPlayer aiPlayer = new SirenPlayer();
-                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, "Tone1Vol"));
+                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{firstTone}Vol", rumbler));
 
                         AiSirenState state = new AiSirenState
                         {
                             Player = aiPlayer,
-                            CurrentToneIndex = 1,
+                            ModelName = modelName,
+                            RumblerOn = rumbler,
+                            CurrentToneIndex = firstTone,
                             NextToneChangeTime = Game.GameTime + (uint)rnd.Next(4000, 8000)
                         };
                         activeAiSirens[v] = state;
@@ -854,8 +798,9 @@ namespace CustomELSSirens
                     continue;
                 }
 
-                bool hasNoDriver = aiVeh.Driver == null || !aiVeh.Driver.IsValid();
-                bool isDriverDead = !hasNoDriver && !aiVeh.Driver.IsAlive;
+                Ped driver = aiVeh.Driver;
+                bool hasNoDriver = driver == null || !driver.IsValid();
+                bool isDriverDead = !hasNoDriver && !driver.IsAlive;
                 bool shouldStop = isDriverDead || (hasNoDriver && PluginConfig.AutomaticAiSirenCutoff);
 
                 if (shouldStop)
@@ -872,50 +817,37 @@ namespace CustomELSSirens
                     }
                     else
                     {
-                        string modelName = GetVehicleModelName(aiVeh);
+                        string modelName = state.ModelName;
+                        bool rumbler = GetRumblerState(aiVeh, modelName);
+                        if (state.RumblerOn != rumbler) { aiPlayer.Stop(true); state.RumblerOn = rumbler; }
 
                         if (!aiPlayer.IsPlaying)
                         {
-                            string path = GetProfileSiren(modelName, $"Tone{state.CurrentToneIndex}");
-                            if (string.IsNullOrEmpty(path) || path == "None" || !File.Exists(path))
+                            string path = GetProfileSiren(modelName, $"Tone{state.CurrentToneIndex}", rumbler);
+                            if (!IsSoundAvailable(path))
                             {
-                                state.CurrentToneIndex = 1;
-                                path = GetProfileSiren(modelName, "Tone1");
+                                state.CurrentToneIndex = ToneSlots.Next(0, tone => IsSoundAvailable(GetProfileSiren(modelName, ToneSlots.Keys[tone - 1], rumbler)));
+                                path = state.CurrentToneIndex == 0 ? "None" : GetProfileSiren(modelName, ToneSlots.Keys[state.CurrentToneIndex - 1], rumbler);
                             }
 
                             CachedSound sound = GetCachedSound(path);
                             if (sound != null)
                             {
-                                aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{state.CurrentToneIndex}Vol"));
+                                aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{state.CurrentToneIndex}Vol", rumbler));
                                 state.NextToneChangeTime = Game.GameTime + (uint)rnd.Next(4000, 8000);
                             }
                         }
                         else
                         {
-                            if (Game.GameTime > state.NextToneChangeTime && !forceMuteAll)
+                            if (TimeReached(Game.GameTime, state.NextToneChangeTime) && !forceMuteAll)
                             {
-                                int nextTone = state.CurrentToneIndex;
-                                bool found = false;
-
-                                for (int i = 0; i < 4; i++)
+                                int nextTone = ToneSlots.Next(state.CurrentToneIndex, tone => IsSoundAvailable(GetProfileSiren(modelName, ToneSlots.Keys[tone - 1], rumbler)));
+                                if (nextTone != 0 && nextTone != state.CurrentToneIndex)
                                 {
-                                    nextTone++;
-                                    if (nextTone > 4) nextTone = 1;
-                                    string path = GetProfileSiren(modelName, $"Tone{nextTone}");
-                                    if (!string.IsNullOrEmpty(path) && path != "None" && File.Exists(path))
-                                    {
-                                        found = true;
-                                        break;
-                                    }
-                                }
-
-                                if (found && nextTone != state.CurrentToneIndex)
-                                {
-                                    string path = GetProfileSiren(modelName, $"Tone{nextTone}");
-                                    CachedSound sound = GetCachedSound(path);
+                                    CachedSound sound = GetCachedSound(GetProfileSiren(modelName, ToneSlots.Keys[nextTone - 1], rumbler));
                                     if (sound != null)
                                     {
-                                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{nextTone}Vol"));
+                                        aiPlayer.Play(sound, true, GetPerSirenVolume(modelName, $"Tone{nextTone}Vol", rumbler));
                                         state.CurrentToneIndex = nextTone;
                                     }
                                 }
@@ -925,6 +857,7 @@ namespace CustomELSSirens
                     }
                 }
 
+                aiPlayer.SetSirenVolume(GetPerSirenVolume(state.ModelName, $"Tone{state.CurrentToneIndex}Vol", state.RumblerOn));
                 aiPlayer.Update3D(aiVeh, camPos, camRot, forceMuteAll);
 
                 if (!aiPlayer.IsPlaying)
