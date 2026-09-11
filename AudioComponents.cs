@@ -68,6 +68,11 @@ namespace CustomELSSirens
         public void SetVolume(float volume) => TargetVolume = AudioMath.Clamp(volume, 0f, 1f);
         public void SetSirenVolume(float volume) => perSirenVolume = AudioMath.Clamp(volume, 0f, 1f);
 
+        internal void DelayForPause(uint elapsed)
+        {
+            if (IsFadingOut) fadeStart = unchecked(fadeStart + elapsed);
+        }
+
         public void Update3D(Vehicle veh, Vector3 camPos, Vector3 camRot, bool forceMute = false)
         {
             if (!IsPlaying) { IsFadingOut = false; return; }

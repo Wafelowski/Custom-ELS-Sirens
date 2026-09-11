@@ -16,6 +16,7 @@ namespace CustomELSSirens
         private static readonly SirenPlayer activeSiren = new SirenPlayer();
         private static readonly SirenPlayer activeHorn = new SirenPlayer();
         private static readonly SirenPlayer activeManual = new SirenPlayer();
+        private static readonly SirenPlayer activeFiamms = new SirenPlayer();
         private static readonly Dictionary<Vehicle, AiSirenState> activeAiSirens = new Dictionary<Vehicle, AiSirenState>();
 
         private static Vehicle currentVehicle = null;
@@ -25,16 +26,19 @@ namespace CustomELSSirens
         private static bool vehicleProfileExists = false;
 
         private static int activeToneIndex = 0;
-        private static bool isAutoScanActive = false;
-        private static uint nextScanChangeTime = 0;
-
         private static readonly bool[] wasTone = new bool[ToneSlots.Count];
-        private static bool wasHorn, wasManul, wasScan, wasTonX;
+        private static bool wasHorn, wasManul, wasSirenToggle, wasTonX;
         private static readonly HornInterruption hornInterruption = new HornInterruption();
+        private static readonly Action stopPrimarySiren = () => activeSiren.Stop(true);
+        private static readonly Action playPrimarySiren = PlayCurrentTone;
+        private static readonly Action cyclePrimarySiren = CycleCurrentTone;
         private static readonly Dictionary<Vehicle, bool> rumblerStates = new Dictionary<Vehicle, bool>();
-        private static bool wasRumbler;
+        private static bool wasRumbler, wasFiamms;
         private static readonly bool[] wasExtra = new bool[4];
         private static bool featureInputSuppressed = true;
+        private static bool hornCycleInputSuppressed = true;
+        private static bool wasGamePaused;
+        private static uint pauseStarted;
         private static readonly Func<Keys, bool> readKey = Game.IsKeyDownRightNow;
         private static uint nextAiScanTime = 0;
         private static readonly Random rnd = new Random();
@@ -48,13 +52,46 @@ namespace CustomELSSirens
         private static bool _elsModelsCached = false;
         private static readonly Dictionary<string, string> _elsFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
+        internal static bool IsGamePaused => Game.IsPaused || Game.IsLoading ||
+            NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>() || Game.TimeScale == 0f;
+
         public static void ProcessLoop()
         {
-            bool isPaused = Game.IsPaused || Game.IsLoading || NativeFunction.Natives.IS_PAUSE_MENU_ACTIVE<bool>() || Game.TimeScale == 0f;
             bool isMenuOpen = MenuManager.IsAnyMenuOpen;
-            AudioEngine.SetMuted(isPaused || isMenuOpen);
-            if (isPaused) { featureInputSuppressed = true; return; }
+            AudioEngine.SetMuted(isMenuOpen);
+            if (IsGamePaused)
+            {
+                AudioEngine.SetPaused(true);
+                if (!wasGamePaused) { pauseStarted = Game.GameTime; wasGamePaused = true; }
+                featureInputSuppressed = true;
+                hornCycleInputSuppressed = true;
+                return;
+            }
+            if (wasGamePaused)
+            {
+                // Some loading/time-scale states keep the game clock moving.
+                // Preserve fade progress and AI tone deadlines in those states.
+                uint elapsed = unchecked(Game.GameTime - pauseStarted);
+                activeSiren.DelayForPause(elapsed);
+                activeHorn.DelayForPause(elapsed);
+                activeManual.DelayForPause(elapsed);
+                activeFiamms.DelayForPause(elapsed);
+                foreach (var state in activeAiSirens.Values)
+                {
+                    state.Player.DelayForPause(elapsed);
+                    state.NextToneChangeTime = unchecked(state.NextToneChangeTime + elapsed);
+                }
+                nextAiScanTime = unchecked(nextAiScanTime + elapsed);
+                wasGamePaused = false;
+            }
+            // Resolve released keys and invalid/deleted vehicles before audio
+            // resumes, including keys released while the game was paused.
+            try { ProcessUnpausedLoop(isMenuOpen); }
+            finally { AudioEngine.SetPaused(false); }
+        }
 
+        private static void ProcessUnpausedLoop(bool isMenuOpen)
+        {
             Ped player = Game.LocalPlayer.Character;
             if (player == null || !player.IsValid() || !player.IsAlive)
             {
@@ -81,11 +118,11 @@ namespace CustomELSSirens
                 currentVehicle = veh;
                 CurrentVehicleModel = GetVehicleModelName(veh);
                 activeToneIndex = 0;
-                isAutoScanActive = false;
 
                 activeSiren.Stop(true);
                 activeHorn.Stop(true);
                 activeManual.Stop(true);
+                activeFiamms.Stop(true);
 
                 ResetInputs();
                 ParseVCF(CurrentVehicleModel);
@@ -95,7 +132,6 @@ namespace CustomELSSirens
             if (activeToneIndex != 0 && !activeSiren.IsPlaying && !hornInterruption.IsActive)
             {
                 activeToneIndex = 0;
-                isAutoScanActive = false;
             }
 
             if (currentVehicle != null && currentVehicle.IsValid() && currentVehicle.IsAlive)
@@ -128,6 +164,7 @@ namespace CustomELSSirens
                     }
                     else
                     {
+                        hornCycleInputSuppressed = true;
                         if (activeHorn.IsPlaying) activeHorn.Stop(true);
                         if (activeManual.IsPlaying) activeManual.Stop(false);
 
@@ -143,21 +180,21 @@ namespace CustomELSSirens
                             if (activeToneIndex != 0)
                             {
                                 activeToneIndex = 0;
-                                isAutoScanActive = false;
                                 activeSiren.Stop(false, true);
                             }
+                            activeFiamms.Stop(false, true);
                         }
                     }
 
                     if (!inVehicle || isMenuOpen)
-                        hornInterruption.Update(false, PluginConfig.HornInterruptsSiren, () => activeSiren.Stop(true), RestartAfterHorn);
+                        hornInterruption.Update(false, PluginConfig.HornInterruptsSiren, stopPrimarySiren, playPrimarySiren);
 
                     if (!isLightsOn && activeToneIndex != 0)
                     {
                         activeToneIndex = 0;
-                        isAutoScanActive = false;
                         activeSiren.Stop(false);
                     }
+                    if (!isLightsOn) activeFiamms.Stop(false);
                 }
                 else
                 {
@@ -184,9 +221,11 @@ namespace CustomELSSirens
                     if (activeToneIndex != 0) activeSiren.SetSirenVolume(GetLocalVolume($"Tone{activeToneIndex}Vol"));
                     activeHorn.SetSirenVolume(GetLocalVolume("HornVol"));
                     activeManual.SetSirenVolume(GetLocalVolume(manualVolumeKey));
+                    activeFiamms.SetSirenVolume(GetLocalVolume("FIAMMSVol"));
                     activeSiren.Update3D(currentVehicle, camPos, camRot, sirenForceMute);
                     activeHorn.Update3D(currentVehicle, camPos, camRot, shouldMuteAll);
                     activeManual.Update3D(currentVehicle, camPos, camRot, shouldMuteAll);
+                    activeFiamms.Update3D(currentVehicle, camPos, camRot, shouldMuteAll);
                 }
 
                 UpdateActiveAiSirens(camPos, camRot, shouldMuteAll);
@@ -225,10 +264,11 @@ namespace CustomELSSirens
         private static void ResetInputs()
         {
             Array.Clear(wasTone, 0, wasTone.Length);
-            wasHorn = wasManul = wasScan = wasTonX = false;
+            wasHorn = wasManul = wasSirenToggle = wasTonX = false;
             hornInterruption.Reset();
             featureInputSuppressed = true;
-            wasRumbler = false;
+            hornCycleInputSuppressed = true;
+            wasRumbler = wasFiamms = false;
             Array.Clear(wasExtra, 0, wasExtra.Length);
 
             currentTrackedStage = 0;
@@ -244,6 +284,7 @@ namespace CustomELSSirens
             activeSiren.Stop(true);
             activeHorn.Stop(true);
             activeManual.Stop(true);
+            activeFiamms.Stop(true);
 
             foreach (var p in activeAiSirens.Values)
                 p.Player.Stop(true);
@@ -253,6 +294,7 @@ namespace CustomELSSirens
             rumblerStates.Clear();
             ProfileStore.Clear();
             _vehicleScratch.Clear();
+            wasGamePaused = false;
 
             AudioEngine.Shutdown();
             Game.Console.Print("[CustomSirens] Unloaded.");
@@ -263,8 +305,8 @@ namespace CustomELSSirens
             if (activeSiren.IsPlaying) activeSiren.Stop(true);
             if (activeHorn.IsPlaying) activeHorn.Stop(true);
             if (activeManual.IsPlaying) activeManual.Stop(true);
+            if (activeFiamms.IsPlaying) activeFiamms.Stop(true);
             activeToneIndex = 0;
-            isAutoScanActive = false;
             currentVehicle = null;
             CurrentVehicleModel = string.Empty;
             ResetInputs();
@@ -275,8 +317,8 @@ namespace CustomELSSirens
             if (activeSiren.IsPlaying) activeSiren.Stop(dropInstantly);
             if (activeHorn.IsPlaying) activeHorn.Stop(dropInstantly);
             if (activeManual.IsPlaying) activeManual.Stop(dropInstantly);
+            if (activeFiamms.IsPlaying) activeFiamms.Stop(dropInstantly);
             activeToneIndex = 0;
-            isAutoScanActive = false;
             ResetInputs();
         }
 
@@ -360,7 +402,9 @@ namespace CustomELSSirens
             if (isHornPressed && !wasHorn) PlayHorn();
             else if (!isHornPressed && wasHorn) activeHorn.Stop(true);
             wasHorn = isHornPressed;
-            hornInterruption.Update(isHornPressed, PluginConfig.HornInterruptsSiren, () => activeSiren.Stop(true), RestartAfterHorn);
+            hornInterruption.Update(isHornPressed, PluginConfig.HornInterruptsSiren, stopPrimarySiren, playPrimarySiren,
+                PluginConfig.HornCyclesSiren && isLightsOn && !hornCycleInputSuppressed ? cyclePrimarySiren : null);
+            hornCycleInputSuppressed = false;
 
 
             bool enableTracking = GetVehicleLightStageTracking(CurrentVehicleModel);
@@ -399,30 +443,21 @@ namespace CustomELSSirens
             }
             wasManul = isManulPressed;
 
-            bool isScanPressed = IsKeyDown(PluginConfig.Snd_SrnScan) ||
-                                 (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_SrnToggle));
-
-            if (isScanPressed && !wasScan)
+            // Retain the controller's on/off button without automatic cycling.
+            bool isSirenToggle = PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_SrnToggle);
+            if (isSirenToggle && !wasSirenToggle)
             {
                 if (isLightsOn)
                 {
                     if (activeToneIndex != 0)
                     {
-                        isAutoScanActive = false;
                         activeToneIndex = 0;
                         activeSiren.Stop(false);
                     }
                     else
                     {
-                        isAutoScanActive = true;
-                        activeToneIndex = 1;
-
-                        string path = GetLocalSiren("Tone1");
-                        if (!IsSoundAvailable(path))
-                            AdvanceToNextValidTone(ref activeToneIndex);
-
+                        activeToneIndex = ToneSlots.Next(0, index => IsSoundAvailable(GetLocalSiren(ToneSlots.Keys[index - 1])));
                         PlayCurrentTone();
-                        nextScanChangeTime = Game.GameTime + 6000;
                     }
                 }
                 else
@@ -430,18 +465,7 @@ namespace CustomELSSirens
                     Game.Console.Print("[CustomSirens] Vehicle emergency lights must be active to trigger custom sirens.");
                 }
             }
-            wasScan = isScanPressed;
-
-            if (isAutoScanActive && activeToneIndex != 0 && !hornInterruption.IsActive)
-            {
-                if (TimeReached(Game.GameTime, nextScanChangeTime))
-                {
-                    int previousTone = activeToneIndex;
-                    AdvanceToNextValidTone(ref activeToneIndex);
-                    if (activeToneIndex != previousTone) PlayCurrentTone();
-                    nextScanChangeTime = Game.GameTime + 6000;
-                }
-            }
+            wasSirenToggle = isSirenToggle;
 
             bool isTonX = IsKeyDown(PluginConfig.Snd_SrnTonX) ||
                           (PluginConfig.EnableControllerSupport && Game.IsControllerButtonDownRightNow(PluginConfig.Controller_SrnTonX));
@@ -450,9 +474,7 @@ namespace CustomELSSirens
             {
                 if (isLightsOn && activeToneIndex != 0)
                 {
-                    isAutoScanActive = false;
-                    AdvanceToNextValidTone(ref activeToneIndex);
-                    PlayCurrentTone();
+                    CycleCurrentTone();
                 }
             }
             wasTonX = isTonX;
@@ -464,17 +486,17 @@ namespace CustomELSSirens
             toneIndex = ToneSlots.Next(toneIndex, index => IsSoundAvailable(GetLocalSiren(ToneSlots.Keys[index - 1])));
         }
 
-        private static void RestartAfterHorn()
+        private static void CycleCurrentTone()
         {
+            if (activeToneIndex == 0) return;
+            AdvanceToNextValidTone(ref activeToneIndex);
             PlayCurrentTone();
-            if (isAutoScanActive) nextScanChangeTime = Game.GameTime + 6000;
         }
 
         private static void PlayCurrentTone()
         {
             if (activeToneIndex == 0)
             {
-                isAutoScanActive = false;
                 activeSiren.Stop(true);
                 return;
             }
@@ -485,7 +507,6 @@ namespace CustomELSSirens
             {
                 activeSiren.Stop(true);
                 activeToneIndex = 0;
-                isAutoScanActive = false;
             }
         }
 
@@ -529,19 +550,11 @@ namespace CustomELSSirens
 
                     if (activeToneIndex == toneIndex)
                     {
-                        if (isAutoScanActive)
-                        {
-                            isAutoScanActive = false;
-                        }
-                        else
-                        {
-                            activeToneIndex = 0;
-                            activeSiren.Stop(false);
-                        }
+                        activeToneIndex = 0;
+                        activeSiren.Stop(false);
                     }
                     else
                     {
-                        isAutoScanActive = false;
                         activeToneIndex = toneIndex;
                         PlayCurrentTone();
                     }
@@ -584,8 +597,36 @@ namespace CustomELSSirens
             if (activeToneIndex != 0) PlayCurrentTone();
             if (activeHorn.IsPlaying && !activeHorn.IsFadingOut) PlayHorn();
             if (activeManual.IsPlaying && !activeManual.IsFadingOut) PlayManual();
+            if (CurrentFiammsActive) PlayFiamms();
             Game.DisplayNotification(enabled ? "~b~Rumbler ON" : "~w~Rumbler OFF");
             return true;
+        }
+
+        internal static bool CurrentFiammsActive => activeFiamms.IsPlaying && !activeFiamms.IsFadingOut;
+        internal static bool CurrentFiammsAvailable => CanControlCurrentVehicle && IsSoundAvailable(GetLocalSiren("FIAMMS"));
+
+        internal static bool SetCurrentFiamms(bool enabled)
+        {
+            if (!CanControlCurrentVehicle) return false;
+            if (!enabled) { activeFiamms.Stop(false); return true; }
+            if (!CurrentFiammsAvailable)
+            {
+                Game.DisplayNotification("~y~Assign a FIAMMS WAV in this vehicle's profile first.");
+                return false;
+            }
+            if (!IsVehicleLightsOn(currentVehicle))
+            {
+                Game.DisplayNotification("~y~Vehicle emergency lights must be active to enable FIAMMS.");
+                return false;
+            }
+            if (!CurrentFiammsActive) PlayFiamms();
+            return CurrentFiammsActive;
+        }
+
+        private static void PlayFiamms()
+        {
+            // Independent voice: never stop/mute the primary siren or horn.
+            activeFiamms.Play(GetCachedSound(GetLocalSiren("FIAMMS")), true, GetLocalVolume("FIAMMSVol"));
         }
 
         private static void HandleVehicleFeatures()
@@ -595,6 +636,13 @@ namespace CustomELSSirens
             if (!featureInputSuppressed && rumblerDown && !wasRumbler && profile.RumblerEnabled)
                 SetCurrentRumbler(!CurrentRumblerActive);
             wasRumbler = rumblerDown;
+            bool fiammsDown = IsKeyDown(profile.FiammsKey);
+            if (!featureInputSuppressed && fiammsDown && !wasFiamms)
+            {
+                if (SetCurrentFiamms(!CurrentFiammsActive))
+                    Game.DisplayNotification(CurrentFiammsActive ? "~b~FIAMMS ON" : "~w~FIAMMS OFF");
+            }
+            wasFiamms = fiammsDown;
             // Resolve all edges before acting: a duplicate key has one stable
             // action instead of repeatedly switching between text modes.
             int requestedExtra = -1;

@@ -18,6 +18,7 @@ namespace CustomELSSirens
             internal int StageCount;
             internal bool RumblerEnabled;
             internal Keys RumblerKey;
+            internal Keys FiammsKey;
             internal readonly int[] Extras = { -1, -1, -1, -1 };
             internal readonly Keys[] ExtraKeys = new Keys[4];
             internal readonly Dictionary<string, string> SoundFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -41,7 +42,7 @@ namespace CustomELSSirens
             }
         }
 
-        internal static readonly string[] SoundKeys = { "Tone1", "Tone2", "Tone3", "Tone4", "Tone5", "Tone6", "Horn", "Manual" };
+        internal static readonly string[] SoundKeys = { "Tone1", "Tone2", "Tone3", "Tone4", "Tone5", "Tone6", "Horn", "Manual", "FIAMMS" };
         private static readonly Dictionary<string, Profile> profiles = new Dictionary<string, Profile>(StringComparer.OrdinalIgnoreCase);
 
         internal static void Clear() => profiles.Clear();
@@ -63,6 +64,7 @@ namespace CustomELSSirens
                 global.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount))));
             profile.RumblerEnabled = ini.ReadBoolean("Rumbler", "Enabled", global.ReadBoolean("Rumbler", "Enabled", false));
             profile.RumblerKey = ini.ReadEnum("Keybinds", "Toggle_Rumbler", global.ReadEnum("Keybinds", "Toggle_Rumbler", PluginConfig.Toggle_Rumbler));
+            profile.FiammsKey = ini.ReadEnum("Keybinds", "Toggle_FIAMMS", global.ReadEnum("Keybinds", "Toggle_FIAMMS", PluginConfig.Toggle_FIAMMS));
             Keys[] defaults = { PluginConfig.Toggle_RedBeacon, PluginConfig.Toggle_MatrixText1, PluginConfig.Toggle_MatrixText2, PluginConfig.Toggle_MatrixText3 };
             for (int i = 0; i < ExtraControls.Names.Length; i++)
             {

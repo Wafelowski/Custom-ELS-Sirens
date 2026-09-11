@@ -23,15 +23,23 @@ namespace CustomELSSirens
     // Releasing a horn restarts the latest selection, never an obsolete request.
     internal sealed class HornInterruption
     {
+        private bool wasPressed;
         internal bool IsActive { get; private set; }
-        internal void Reset() => IsActive = false;
-        internal void Update(bool pressed, bool enabled, Action stop, Action restart)
+        internal void Reset() { IsActive = false; wasPressed = false; }
+        internal void Update(bool pressed, bool enabled, Action stop, Action restart, Action cycle = null)
         {
+            bool risingEdge = pressed && !wasPressed;
+            wasPressed = pressed;
             bool interrupt = pressed && enabled;
-            if (interrupt == IsActive) return;
-            IsActive = interrupt;
-            if (interrupt) stop();
-            else restart();
+            if (interrupt != IsActive)
+            {
+                IsActive = interrupt;
+                if (interrupt) stop();
+                else restart();
+            }
+            // Set interruption before changing selection, so a horn press cannot
+            // briefly start the next tone before it is supposed to restart.
+            if (risingEdge) cycle?.Invoke();
         }
     }
 

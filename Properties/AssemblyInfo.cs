@@ -6,7 +6,7 @@ using System.Runtime.InteropServices;
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
 [assembly: AssemblyTitle("CustomELSSirens")]
-[assembly: AssemblyDescription("Six-tone custom ELS sirens with rumbler banks, vehicle extras and asynchronous audio caching")]
+[assembly: AssemblyDescription("Six-tone ELS sirens with FIAMMS layering, rumbler banks, horn cycling and pause-aware asynchronous audio")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("Maggie Waggie")]
 [assembly: AssemblyProduct("CustomELSSirens")]
@@ -29,5 +29,5 @@ using System.Runtime.InteropServices;
 //      Build Number
 //      Revision
 //
-[assembly: AssemblyVersion("1.9.0.0")]
-[assembly: AssemblyFileVersion("1.9.0.0")]
+[assembly: AssemblyVersion("1.10.0.0")]
+[assembly: AssemblyFileVersion("1.10.0.0")]

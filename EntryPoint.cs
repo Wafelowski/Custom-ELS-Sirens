@@ -2,7 +2,7 @@ using Rage;
 using System;
 using System.Threading;
 
-[assembly: Rage.Attributes.Plugin("Custom ELS Sirens", Author = "Maggie Waggie, edit by PolishEmergencyV", Description = "Per-vehicle ELS sirens with asynchronous WAV caching, shared audio output and positional sound.")]
+[assembly: Rage.Attributes.Plugin("Custom ELS Sirens", Author = "Maggie Waggie", Description = "Per-vehicle ELS sirens with asynchronous WAV caching, shared audio output and positional sound.")]
 
 namespace CustomELSSirens
 {

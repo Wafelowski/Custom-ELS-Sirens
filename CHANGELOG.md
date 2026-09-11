@@ -1,3 +1,14 @@
+# 1.10.0.0
+
+## FIAMMS, controls, and pause
+
+- Added FIAMMS as an independent looping siren voice, with normal/rumbler WAV slots, separate volumes, a per-vehicle menu toggle, and an F9 default binding. FIAMMS follows light restriction and exit/cleanup rules while remaining independent of main-tone changes, horn interruption, and manual muting.
+- Removed player panic/scan bindings from configuration fields, load/save, and ELS import. Removed player auto-scan input handling, state, and timers. The controller on/off button now selects the first configured tone and keeps it selected; tone-cycle and AI rotation remain.
+- Added the Horn Cycles Siren menu/config option. Horn presses use the existing tone-cycle behavior once per press. Horn interruption defers playback of the next selected tone until release. Held presses are not re-triggered by enabling the option or returning from menus/pauses.
+- Added true audio pause before mixer reads for game pause, loading, zero time scale, and a stale game heartbeat. WAV cursors, reverb state, and gain ramps stop advancing; newly loaded voices wait for resume. Device creation/disposal remains off the game fiber, and pause/resume reuses the output.
+- Suspend configuration-menu input during game pause, preserve fade/AI deadlines across any paused game-clock advance, and process released controls before resuming audio. F10 menu muting retains its existing behavior.
+- Added four regression checks (21 total) plus live-output pause coverage, updated INI examples, and expanded in-game acceptance instructions. Syntax/reference checks pass; compilation, regression execution, and game testing remain unverified in this environment.
+
 # 1.9.0.0
 
 ## Requested controls and sound banks

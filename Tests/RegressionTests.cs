@@ -35,6 +35,10 @@ internal static class RegressionTests
             Run("Mapped extras toggle safely with exclusive matrix texts", ExtraMappings);
             Run("Unbound keys and modifier chords", ModifierKeys);
             Run("New keybinds and tone volumes survive reload", NewConfigRoundTrip);
+            Run("Horn cycles once per press and restarts the next tone", HornCycling);
+            Run("FIAMMS profile slots, rumbler fallback and key overrides", FiammsProfiles);
+            Run("FIAMMS and main siren voices play and stop independently", IndependentLayers);
+            Run("Pause freezes all mixer cursors and newly loaded voices", PausedMixer);
             Console.WriteLine("PASS: " + passed + " regression checks.");
             return 0;
         }
@@ -163,6 +167,11 @@ internal static class RegressionTests
             AudioEngine.SetMuted(false);
             Check(SpinWait.SpinUntil(() => { AudioEngine.Heartbeat(); return fake.Pull().Any(x => x != 0f); }, 2000), "Latest uncancelled request did not play.");
             Check(creations == 1 && fake.StopCount == 0, "Tone changes reopened/stopped the output device.");
+            AudioEngine.SetPaused(true);
+            Check(fake.Pull().All(x => x == 0f) && owner.IsPlaying, "Pause did not silence the live output while retaining the request.");
+            AudioEngine.SetPaused(false);
+            AudioEngine.Heartbeat();
+            Check(fake.Pull().Any(x => x != 0f) && creations == 1 && fake.StopCount == 0, "Resume recreated/stopped the device or lost playback.");
             AudioEngine.SetMuted(true);
             Check(fake.Pull().All(x => x == 0f), "Global mute leaked samples.");
             owner.Stop(true);
@@ -184,6 +193,16 @@ internal static class RegressionTests
             Rage.Game.GameTime = 1101;
             owner.Update3D(vehicle, default(Rage.Vector3), default(Rage.Vector3), true);
             Check(!owner.IsPlaying && !owner.IsFadingOut, "Force-muting prevented fade completion.");
+            Rage.Game.GameTime = 2000;
+            owner.Play(Constant(), true, 1f);
+            owner.Stop(false);
+            Rage.Game.GameTime = 7025;
+            owner.DelayForPause(5000);
+            owner.Update3D(vehicle, default(Rage.Vector3), default(Rage.Vector3));
+            Check(owner.IsPlaying && owner.IsFadingOut, "A game-clock jump during pause consumed the fade.");
+            Rage.Game.GameTime = 7101;
+            owner.Update3D(vehicle, default(Rage.Vector3), default(Rage.Vector3));
+            Check(!owner.IsPlaying, "Fade did not complete after resuming.");
             owner.Play(Constant(), true, 1f);
             vehicle.Valid = false;
             owner.Update3D(vehicle, default(Rage.Vector3), default(Rage.Vector3));
@@ -244,7 +263,7 @@ internal static class RegressionTests
         for (int tone = 1; tone <= 6; tone++)
             Check(ToneSlots.Next(tone, index => true) == tone % 6 + 1, "Six-tone cycling order is incorrect.");
         Check(ToneSlots.Next(0, tone => tone == 5 || tone == 6) == 5, "Tone5-only profiles cannot start.");
-        Check(ToneSlots.Next(5, tone => tone == 6) == 6, "Tone6 is skipped by manual/scan selection.");
+        Check(ToneSlots.Next(5, tone => tone == 6) == 6, "Tone6 is skipped by manual/cycle selection.");
         Check(ToneSlots.Next(6, tone => tone == 6) == 6, "Single configured Tone6 cannot loop through the slots.");
         Check(ToneSlots.Next(3, tone => false) == 0, "An empty tone bank did not return OFF.");
         Check(ProfileStore.SoundKeys.Contains("Tone5") && ProfileStore.SoundKeys.Contains("Tone6"), "Profile/menu slots are missing.");
@@ -373,16 +392,176 @@ internal static class RegressionTests
         PluginConfig.Snd_SrnTon5 = System.Windows.Forms.Keys.D8;
         PluginConfig.Snd_SrnTon6 = System.Windows.Forms.Keys.D9;
         PluginConfig.Toggle_Rumbler = System.Windows.Forms.Keys.F11;
+        PluginConfig.Toggle_FIAMMS = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F9;
+        PluginConfig.HornCyclesSiren = true;
+        PluginConfig.FIAMMSVol = 0.65f;
         PluginConfig.Toggle_RedBeacon = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.B;
         PluginConfig.Tone5Vol = 0.45f;
         PluginConfig.Tone6Vol = 0.55f;
         PluginConfig.SaveConfig();
         PluginConfig.Snd_SrnTon5 = PluginConfig.Snd_SrnTon6 = PluginConfig.Toggle_Rumbler = PluginConfig.Toggle_RedBeacon = System.Windows.Forms.Keys.None;
         PluginConfig.Tone5Vol = PluginConfig.Tone6Vol = 0;
+        PluginConfig.Toggle_FIAMMS = System.Windows.Forms.Keys.None;
+        PluginConfig.HornCyclesSiren = false;
+        PluginConfig.FIAMMSVol = 0;
         PluginConfig.Load();
         Check(PluginConfig.GetToneKey(5) == System.Windows.Forms.Keys.D8 && PluginConfig.GetToneKey(6) == System.Windows.Forms.Keys.D9, "New tone keybinds were lost.");
         Check(PluginConfig.Toggle_Rumbler == System.Windows.Forms.Keys.F11 && PluginConfig.Toggle_RedBeacon == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.B), "Feature keybinds were lost.");
         Check(PluginConfig.Tone5Vol == 0.45f && PluginConfig.Tone6Vol == 0.55f, "New tone volumes were lost.");
+        Check(PluginConfig.Toggle_FIAMMS == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F9) && PluginConfig.FIAMMSVol == 0.65f, "FIAMMS binding/volume were lost.");
+        Check(PluginConfig.HornCyclesSiren, "Horn cycle option was lost.");
+    }
+
+    private static void HornCycling()
+    {
+        var rule = new HornInterruption();
+        var events = new System.Collections.Generic.List<string>();
+        int selected = 5, playing = 5, cycles = 0;
+        Action stop = () => { playing = 0; events.Add("stop"); };
+        Action restart = () => { playing = selected; events.Add("restart:" + selected); };
+        Action cycle = () =>
+        {
+            cycles++;
+            selected = ToneSlots.Next(selected, tone => tone == 2 || tone == 5 || tone == 6);
+            if (!rule.IsActive) playing = selected;
+            events.Add("cycle:" + selected);
+        };
+        rule.Update(true, true, stop, restart, cycle);
+        Check(playing == 0 && selected == 6, "Horn cycling started the next tone before release.");
+        for (int i = 0; i < 10; i++) rule.Update(true, true, stop, restart, cycle);
+        Check(cycles == 1, "Held horn cycled repeatedly.");
+        rule.Update(false, true, stop, restart, cycle);
+        Check(playing == 6 && events.SequenceEqual(new[] { "stop", "cycle:6", "restart:6" }), "Stop/cycle/restart order was incorrect.");
+        rule.Update(true, true, stop, restart, cycle);
+        rule.Update(false, true, stop, restart, cycle);
+        Check(playing == 2 && cycles == 2, "Horn cycling did not wrap past empty slots.");
+        rule.Update(true, false, stop, restart, cycle);
+        Check(playing == 5 && !rule.IsActive && cycles == 3, "Non-interrupting horn failed to cycle immediately.");
+        rule.Update(false, false, stop, restart, cycle);
+        // A disabled/suppressed cycling callback still tracks the held key.
+        rule.Update(true, false, stop, restart);
+        rule.Update(true, false, stop, restart, cycle);
+        Check(cycles == 3, "Enabling cycling while the horn was held triggered a new press.");
+        rule.Update(false, false, stop, restart, cycle);
+        rule.Update(true, false, stop, restart, cycle);
+        Check(cycles == 4 && playing == 6, "Fresh horn press did not re-arm cycling.");
+    }
+
+    private static void FiammsProfiles()
+    {
+        File.Copy(WriteWav("fiamms-fixture.wav", 44100, 1, 16, false, 1000), Path.Combine(PluginConfig.WavFolder, "fiamms.wav"));
+        File.Copy(WriteWav("fiamms-on-fixture.wav", 44100, 1, 16, false, 1000), Path.Combine(PluginConfig.WavFolder, "fiamms-on.wav"));
+        var ini = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "FIAMMSTEST.ini"));
+        ini.Create();
+        ini.Write("Sirens", "Tone1", "profile.wav");
+        ini.Write("Sirens", "FIAMMS", "fiamms.wav");
+        ini.Write("RumblerSirens", "FIAMMS", "fiamms-on.wav");
+        ini.Write("SirenVolumes", "FIAMMSVol", "0.4");
+        ini.Write("RumblerVolumes", "FIAMMSVol", "0.8");
+        ini.Write("Rumbler", "Enabled", "true");
+        ini.Write("Keybinds", "Toggle_FIAMMS", "Control, F8");
+        ProfileStore.Clear();
+        var profile = ProfileStore.Get("FIAMMSTEST");
+        Check(ProfileStore.SoundKeys.Contains("FIAMMS"), "FIAMMS is absent from menu/save/preload slots.");
+        Check(Path.GetFileName(profile.GetSound("FIAMMS", false)) == "fiamms.wav" && Path.GetFileName(profile.GetSound("FIAMMS", true)) == "fiamms-on.wav", "FIAMMS banks did not resolve independently.");
+        Check(profile.GetVolume("FIAMMSVol", false) == 0.4f && profile.GetVolume("FIAMMSVol", true) == 0.8f, "FIAMMS bank volumes were not loaded.");
+        Check(profile.FiammsKey == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F8), "Vehicle FIAMMS key did not override the config key.");
+        Check(ProfileStore.Get("UNCONFIGURED").FiammsKey == PluginConfig.Toggle_FIAMMS, "FIAMMS config key was not inherited.");
+        ini.Write("RumblerSirens", "FIAMMS", "None");
+        ProfileStore.Clear();
+        Check(Path.GetFileName(ProfileStore.Get("FIAMMSTEST").GetSound("FIAMMS", true)) == "fiamms.wav", "Unassigned alternate FIAMMS failed to fall back to normal.");
+        ini.Write("Sirens", "FIAMMS", "None");
+        ProfileStore.Clear();
+        Check(ProfileStore.Get("FIAMMSTEST").GetSound("FIAMMS", false) == "None", "Unassigned FIAMMS unexpectedly fell back to a main tone.");
+    }
+
+    private static void IndependentLayers()
+    {
+        var fake = new FakeOutput(false);
+        AudioEngine.Start(() => fake);
+        try
+        {
+            var primary = new SirenPlayer();
+            var fiamms = new SirenPlayer();
+            primary.Play(Constant(), true, 1f);
+            fiamms.Play(Constant(), true, 1f);
+            primary.TargetVolume = fiamms.TargetVolume = 1f;
+            AudioEngine.SetMuted(false);
+            Check(SpinWait.SpinUntil(() =>
+            {
+                AudioEngine.Heartbeat();
+                var samples = fake.Pull();
+                return samples.Length != 0 && samples.Max() > 0.3f;
+            }, 2000), "The two siren voices did not mix together.");
+            primary.Stop(true); // Horn interruption of the main siren.
+            AudioEngine.Heartbeat();
+            Check(!primary.IsPlaying && fiamms.IsPlaying && fake.Pull().Any(value => value != 0f), "Stopping the primary also stopped the FIAMMS layer.");
+            primary.Play(Constant(), true, 1f);
+            primary.TargetVolume = 1f;
+            fiamms.Stop(true);
+            Check(primary.IsPlaying && !fiamms.IsPlaying, "FIAMMS toggle-off interrupted the primary request.");
+            Check(SpinWait.SpinUntil(() => { AudioEngine.Heartbeat(); return fake.Pull().Any(value => value != 0f); }, 2000), "Main siren failed to continue after FIAMMS stopped.");
+            primary.Stop(true);
+        }
+        finally { AudioEngine.Shutdown(); }
+    }
+
+    private static NAudio.Wave.SampleProviders.MixingSampleProvider CreatePauseMixer(System.Collections.Generic.List<PlaybackRequest> requests)
+    {
+        var mixer = new NAudio.Wave.SampleProviders.MixingSampleProvider(WaveFormat.CreateIeeeFloatWaveFormat(CachedSound.SampleRate, 2)) { ReadFully = true };
+        // Distinct main/horn/manual/FIAMMS/AI voices exercise the shared gate.
+        for (int voice = 0; voice < 5; voice++)
+        {
+            var owner = new SirenPlayer { TargetVolume = 0.4f + voice * 0.05f, DistanceReverb = 0.15f, ReverbIntensity = 0.6f };
+            var data = Enumerable.Range(0, 2048).Select(sample => (float)Math.Sin(sample * (voice + 1) * 0.02) * 0.025f).ToArray();
+            var request = new PlaybackRequest(owner, Samples(data), false);
+            requests.Add(request);
+            mixer.AddMixerInput(new AudioEngine.PlaybackVoice(request));
+        }
+        return mixer;
+    }
+
+    private static void PausedMixer()
+    {
+        bool paused = false, muted = false;
+        var requests = new System.Collections.Generic.List<PlaybackRequest>();
+        var referenceRequests = new System.Collections.Generic.List<PlaybackRequest>();
+        var mixer = CreatePauseMixer(requests);
+        var referenceMixer = CreatePauseMixer(referenceRequests);
+        var output = new AudioEngine.OutputProvider(mixer, () => paused, () => muted);
+        var reference = new AudioEngine.OutputProvider(referenceMixer, () => false, () => false);
+        var actual = new float[512];
+        var expected = new float[512];
+        output.Read(actual, 0, actual.Length);
+        reference.Read(expected, 0, expected.Length);
+        Check(actual.SequenceEqual(expected) && actual.Any(value => value != 0f), "Pause test fixture did not produce matching audible voices.");
+        paused = true;
+        var sentinel = Enumerable.Repeat(-9f, 40).ToArray();
+        Check(output.Read(sentinel, 2, 32) == 32 && sentinel.Skip(2).Take(32).All(value => value == 0f), "Pause did not return a full silent buffer.");
+        Check(sentinel.Take(2).Concat(sentinel.Skip(34)).All(value => value == -9f), "Pause wrote outside the requested range.");
+        for (int i = 0; i < 20; i++) output.Read(actual, 0, actual.Length);
+        Check(actual.All(value => value == 0f) && requests.All(request => !request.Completed), "Paused reads advanced or completed a one-shot.");
+        // Simulate the worker finishing a queued WAV load while already paused.
+        var added = new PlaybackRequest(new SirenPlayer { TargetVolume = 0.2f }, Constant(), false);
+        var referenceAdded = new PlaybackRequest(new SirenPlayer { TargetVolume = 0.2f }, Constant(), false);
+        mixer.AddMixerInput(new AudioEngine.PlaybackVoice(added));
+        referenceMixer.AddMixerInput(new AudioEngine.PlaybackVoice(referenceAdded));
+        for (int i = 0; i < 20; i++) output.Read(actual, 0, actual.Length);
+        Check(!added.Completed, "A voice loaded during pause ran to completion silently.");
+        requests[0].Cancelled = referenceRequests[0].Cancelled = true;
+        paused = false;
+        output.Read(actual, 0, actual.Length);
+        reference.Read(expected, 0, expected.Length);
+        Check(actual.SequenceEqual(expected), "Resume skipped/restarted samples or advanced reverb/gain state during pause.");
+        // Menu mute still advances audio; game pause takes priority over it.
+        muted = true;
+        output.Read(actual, 0, actual.Length);
+        reference.Read(expected, 0, expected.Length);
+        Check(actual.All(value => value == 0f), "Menu mute leaked samples.");
+        muted = false;
+        output.Read(actual, 0, actual.Length);
+        reference.Read(expected, 0, expected.Length);
+        Check(actual.SequenceEqual(expected), "Menu mute changed the continuing-playback contract.");
     }
 
     private sealed class FakeExtras : IVehicleExtras

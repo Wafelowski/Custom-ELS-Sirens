@@ -31,6 +31,7 @@ namespace CustomELSSirens
         private static string editingModel = "Global";
         private static UIMenuListItem soundSetItem;
         private static UIMenuCheckboxItem rumblerEnabledItem, rumblerActiveItem;
+        private static UIMenuCheckboxItem fiammsActiveItem;
         private static readonly UIMenuNumericScrollerItem<int>[] extraItems = new UIMenuNumericScrollerItem<int>[4];
         private static UIMenuNumericScrollerItem<float> masterVolumeItem;
 
@@ -41,6 +42,7 @@ namespace CustomELSSirens
         private static UIMenuCheckboxItem controllerSupportItem;
         private static UIMenuCheckboxItem useElsKeybindsItem;
         private static UIMenuCheckboxItem hornInterruptItem;
+        private static UIMenuCheckboxItem hornCycleItem;
         private static UIMenuCheckboxItem aiCutoffItem;
         private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
         private static UIMenuNumericScrollerItem<int> maxAiUnitsItem;
@@ -68,6 +70,11 @@ namespace CustomELSSirens
 
         public static void Process()
         {
+            if (SirenManager.IsGamePaused)
+            {
+                wasMenuKey = Game.IsKeyDownRightNow(PluginConfig.MenuKey);
+                return;
+            }
             MenuPool?.ProcessMenus();
             bool key = Game.IsKeyDownRightNow(PluginConfig.MenuKey);
             if (key && !wasMenuKey) ToggleCustomSirenMenu();
@@ -75,7 +82,7 @@ namespace CustomELSSirens
             if (IsAnyMenuOpen)
             {
                 if (modeItem.Index != 0 && editingModel != SirenManager.CurrentVehicleModel) UpdateMenuSelections();
-                RefreshRumblerControl();
+                RefreshVehicleControls();
             }
         }
 
@@ -107,6 +114,7 @@ namespace CustomELSSirens
             soundSetItem = new UIMenuListItem("WAV set to edit", new List<dynamic> { "Normal / rumbler OFF", "Rumbler ON" }, 0);
             rumblerEnabledItem = new UIMenuCheckboxItem("Enable rumbler for this profile", false, "Configure both WAV sets and save this profile to allow the rumbler toggle key.");
             rumblerActiveItem = new UIMenuCheckboxItem("Rumbler active in current vehicle", false, "Switch the current vehicle between its saved normal and rumbler WAV sets. Save profile changes first.");
+            fiammsActiveItem = new UIMenuCheckboxItem("FIAMMS active in current vehicle", false, "Toggle the saved FIAMMS WAV alongside the main siren. Assign its WAV and save the profile first. Honors the vehicle's siren light restriction.");
             UIMenuItem saveItem = new UIMenuItem("~h~~g~Save Profile", "Saves both WAV sets, volumes, rumbler support, light settings and extra mappings.");
 
             MainMenu.AddItem(modeItem);
@@ -116,10 +124,11 @@ namespace CustomELSSirens
             MainMenu.AddItem(masterVolumeItem);
             MainMenu.AddItem(rumblerEnabledItem);
             MainMenu.AddItem(rumblerActiveItem);
+            MainMenu.AddItem(fiammsActiveItem);
             MainMenu.AddItem(soundSetItem);
             foreach (string key in ProfileStore.SoundKeys)
             {
-                string label = key.StartsWith("Tone", StringComparison.Ordinal) ? "Tone " + key.Substring(4) : key == "Horn" ? "Airhorn" : "Manual siren";
+                string label = key.StartsWith("Tone", StringComparison.Ordinal) ? "Tone " + key.Substring(4) : key == "Horn" ? "Airhorn" : key == "Manual" ? "Manual siren" : "FIAMMS";
                 var soundItem = new UIMenuListItem("~h~~b~" + label, wavsDynamic, 0);
                 var volumeItem = new UIMenuNumericScrollerItem<float>("~o~" + label + " volume", "Volume for this sound in the selected WAV set. In the rumbler set, None uses the normal WAV.", 0f, 100f, 5f);
                 volumeItem.Value = PluginConfig.DefaultSirenVolume(key + "Vol") * 100f;
@@ -144,6 +153,7 @@ namespace CustomELSSirens
             controllerSupportItem = new UIMenuCheckboxItem("~c~Controller Support", PluginConfig.EnableControllerSupport, "Enables Controller inputs for toggling sirens (DPad Down, DPad Right, B).");
             useElsKeybindsItem = new UIMenuCheckboxItem("~c~Use ELS Keybinds", PluginConfig.UseElsKeybinds, "If enabled, directly imports and syncs your controls from the root directory ELS.ini on startup.");
             hornInterruptItem = new UIMenuCheckboxItem("~c~Horn Interrupts Siren", PluginConfig.HornInterruptsSiren, "If enabled, the horn stops the primary siren. Releasing the horn restarts the selected tone from the beginning.");
+            hornCycleItem = new UIMenuCheckboxItem("~c~Horn Cycles Siren", PluginConfig.HornCyclesSiren, "Each horn press selects the next available main tone, like the tone-cycle key. With horn interruption enabled, the next tone starts on release. An inactive main siren stays off; FIAMMS is unaffected.");
 
             reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
             reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
@@ -168,6 +178,7 @@ namespace CustomELSSirens
             SettingsMenu.AddItem(controllerSupportItem);
             SettingsMenu.AddItem(useElsKeybindsItem);
             SettingsMenu.AddItem(hornInterruptItem);
+            SettingsMenu.AddItem(hornCycleItem);
             SettingsMenu.AddItem(reverbIntensityItem);
             SettingsMenu.AddItem(maxDistanceItem);
             SettingsMenu.AddItem(aiCutoffItem);
@@ -196,7 +207,12 @@ namespace CustomELSSirens
                 if (item == rumblerActiveItem)
                 {
                     SirenManager.SetCurrentRumbler(checkedState);
-                    RefreshRumblerControl();
+                    RefreshVehicleControls();
+                }
+                if (item == fiammsActiveItem)
+                {
+                    SirenManager.SetCurrentFiamms(checkedState);
+                    RefreshVehicleControls();
                 }
                 if (item == lightStageTrackingItem)
                 {
@@ -239,6 +255,11 @@ namespace CustomELSSirens
                 if (item == hornInterruptItem)
                 {
                     PluginConfig.HornInterruptsSiren = checkedState;
+                    PluginConfig.SaveConfig();
+                }
+                if (item == hornCycleItem)
+                {
+                    PluginConfig.HornCyclesSiren = checkedState;
                     PluginConfig.SaveConfig();
                 }
             };
@@ -293,6 +314,7 @@ namespace CustomELSSirens
                 case "Tone6Vol": PluginConfig.Tone6Vol = value; break;
                 case "HornVol": PluginConfig.HornVol = value; break;
                 case "ManualVol": PluginConfig.ManualVol = value; break;
+                case "FIAMMSVol": PluginConfig.FIAMMSVol = value; break;
             }
         }
 
@@ -370,6 +392,7 @@ namespace CustomELSSirens
                 controllerSupportItem.Checked = PluginConfig.EnableControllerSupport;
                 useElsKeybindsItem.Checked = PluginConfig.UseElsKeybinds;
                 hornInterruptItem.Checked = PluginConfig.HornInterruptsSiren;
+                hornCycleItem.Checked = PluginConfig.HornCyclesSiren;
                 masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
                 aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
                 aiScanIntervalItem.Value = PluginConfig.AiScanInterval;
@@ -381,7 +404,7 @@ namespace CustomELSSirens
             finally { synchronizing = false; }
         }
 
-        private static void RefreshRumblerControl()
+        private static void RefreshVehicleControls()
         {
             if (rumblerActiveItem == null) return;
             bool previous = synchronizing;
@@ -390,6 +413,9 @@ namespace CustomELSSirens
             {
                 rumblerActiveItem.Enabled = SirenManager.CurrentRumblerAvailable;
                 rumblerActiveItem.Checked = SirenManager.CurrentRumblerActive;
+                fiammsActiveItem.Enabled = SirenManager.CanControlCurrentVehicle &&
+                    (SirenManager.CurrentFiammsActive || SirenManager.CurrentFiammsAvailable);
+                fiammsActiveItem.Checked = SirenManager.CurrentFiammsActive;
             }
             finally { synchronizing = previous; }
         }
@@ -432,7 +458,7 @@ namespace CustomELSSirens
             }
             finally { synchronizing = false; }
             DisplayBank();
-            RefreshRumblerControl();
+            RefreshVehicleControls();
         }
 
         private static void CaptureDisplayedBank()
@@ -496,6 +522,8 @@ namespace CustomELSSirens
             var profile = ProfileStore.Get(editingModel);
             if (string.IsNullOrWhiteSpace(ini.ReadString("Keybinds", "Toggle_Rumbler", "")))
                 ini.Write("Keybinds", "Toggle_Rumbler", profile.RumblerKey.ToString());
+            if (string.IsNullOrWhiteSpace(ini.ReadString("Keybinds", "Toggle_FIAMMS", "")))
+                ini.Write("Keybinds", "Toggle_FIAMMS", profile.FiammsKey.ToString());
             for (int i = 0; i < ExtraControls.Names.Length; i++)
             {
                 string key = "Toggle_" + ExtraControls.Names[i];

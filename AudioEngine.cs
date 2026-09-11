@@ -55,6 +55,12 @@ namespace CustomELSSirens
             if (engine != null) engine.Muted = muted;
         }
 
+        internal static void SetPaused(bool paused)
+        {
+            var engine = instance;
+            if (engine != null) engine.Paused = paused;
+        }
+
         internal static void Heartbeat()
         {
             var engine = instance;
@@ -88,6 +94,7 @@ namespace CustomELSSirens
             private IWavePlayer output;
             private int nextDeviceAttempt;
             internal volatile bool Muted = true;
+            internal volatile bool Paused;
             internal volatile int Heartbeat = Environment.TickCount;
 
             internal Engine(Func<IWavePlayer> outputFactory)
@@ -186,7 +193,7 @@ namespace CustomELSSirens
                 try
                 {
                     output = outputFactory();
-                    output.Init(new SampleToWaveProvider(new OutputProvider(this, mixer)));
+                    output.Init(new SampleToWaveProvider(new OutputProvider(mixer, IsSuspended, () => Muted)));
                     output.Play();
                 }
                 catch (Exception ex)
@@ -196,6 +203,9 @@ namespace CustomELSSirens
                 }
                 nextDeviceAttempt = unchecked(Environment.TickCount + 5000);
             }
+
+            private bool IsSuspended() => stopping || Paused ||
+                unchecked((uint)(Environment.TickCount - Heartbeat)) > 1000u;
 
             private void DisposeOutput()
             {
@@ -245,24 +255,38 @@ namespace CustomELSSirens
                 while (lru.Count > 0) Evict(lru.First.Value);
             }
 
-            private sealed class OutputProvider : ISampleProvider
+        }
+
+        internal sealed class OutputProvider : ISampleProvider
+        {
+            private readonly ISampleProvider source;
+            private readonly Func<bool> shouldPause;
+            private readonly Func<bool> shouldMute;
+            public WaveFormat WaveFormat => source.WaveFormat;
+            internal OutputProvider(ISampleProvider source, Func<bool> shouldPause, Func<bool> shouldMute)
             {
-                private readonly Engine engine;
-                private readonly ISampleProvider source;
-                public WaveFormat WaveFormat => source.WaveFormat;
-                internal OutputProvider(Engine engine, ISampleProvider source) { this.engine = engine; this.source = source; }
-                public int Read(float[] buffer, int offset, int count)
+                this.source = source;
+                this.shouldPause = shouldPause;
+                this.shouldMute = shouldMute;
+            }
+            public int Read(float[] buffer, int offset, int count)
+            {
+                // Return silence before touching the mixer. This freezes every
+                // WAV cursor, reverb buffer and gain ramp, including new voices
+                // loaded during pause, while retaining the same output device.
+                if (shouldPause())
                 {
-                    int read = source.Read(buffer, offset, count);
-                    // No timer, dictionary enumeration, locks on the game fiber,
-                    // or game API calls are needed for the watchdog.
-                    if (engine.stopping || engine.Muted || unchecked((uint)(Environment.TickCount - engine.Heartbeat)) > 1000u)
-                        Array.Clear(buffer, offset, read);
-                    else
-                        for (int i = offset; i < offset + read; i++)
-                            buffer[i] = float.IsNaN(buffer[i]) || float.IsInfinity(buffer[i]) ? 0f : AudioMath.Clamp(buffer[i], -1f, 1f);
-                    return read;
+                    Array.Clear(buffer, offset, count);
+                    return count;
                 }
+                int read = source.Read(buffer, offset, count);
+                // Recheck to silence an in-flight read if pause changed. A menu
+                // mute deliberately retains its existing continuing-playback behavior.
+                if (shouldPause() || shouldMute()) Array.Clear(buffer, offset, read);
+                else
+                    for (int i = offset; i < offset + read; i++)
+                        buffer[i] = float.IsNaN(buffer[i]) || float.IsInfinity(buffer[i]) ? 0f : AudioMath.Clamp(buffer[i], -1f, 1f);
+                return read;
             }
         }
 
