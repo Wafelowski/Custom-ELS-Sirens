@@ -28,7 +28,7 @@ namespace CustomELSSirens
         public static Keys Toggle_MatrixText1 = Keys.None;
         public static Keys Toggle_MatrixText2 = Keys.None;
         public static Keys Toggle_MatrixText3 = Keys.None;
-        public static Keys Snd_SrnTonX = (Keys)54;
+        public static Keys Snd_SrnTonX = Keys.D8;
         public static Keys Toggle_Lsts = Keys.J;
 
         public static bool EnableControllerSupport = true;
