@@ -42,7 +42,8 @@ namespace CustomELSSirens
         private static UIMenuCheckboxItem controllerSupportItem;
         private static UIMenuCheckboxItem useElsKeybindsItem;
         private static UIMenuCheckboxItem hornInterruptItem;
-        private static UIMenuCheckboxItem hornCycleItem;
+        private static UIMenuListItem hornCycleItem;
+        private static UIMenuCheckboxItem debugItem;
         private static UIMenuCheckboxItem aiCutoffItem;
         private static UIMenuNumericScrollerItem<int> aiScanIntervalItem;
         private static UIMenuNumericScrollerItem<int> maxAiUnitsItem;
@@ -107,6 +108,9 @@ namespace CustomELSSirens
             customStageAmountItem = new UIMenuNumericScrollerItem<int>("Custom Light Stage Amount", "Select the maximum amount of light stages to track (1-4). Sirens will only play on the highest stage.", 1, 4, 1);
             customStageAmountItem.Value = PluginConfig.CustomLightStageAmount;
             customStageAmountItem.Enabled = PluginConfig.EnableLightStageTracking;
+            hornCycleItem = new UIMenuListItem("Horn Cycles Siren", HornModes.Labels.Cast<dynamic>().ToList(), 0,
+                "Vehicle-specific. Car horn uses the native horn; siren horn uses the saved Airhorn WAV. Without horn cycles immediately and suppresses both horns. Off keeps normal horn behavior. Save Profile to apply.");
+            hornCycleItem.Enabled = false;
 
             masterVolumeItem = new UIMenuNumericScrollerItem<float>("~h~~y~Master Volume", "Volume Percentage for the global Volume", 0f, 100f, 5f);
             masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
@@ -121,6 +125,7 @@ namespace CustomELSSirens
             MainMenu.AddItem(lightRestrictionItem);
             MainMenu.AddItem(lightStageTrackingItem);
             MainMenu.AddItem(customStageAmountItem);
+            MainMenu.AddItem(hornCycleItem);
             MainMenu.AddItem(masterVolumeItem);
             MainMenu.AddItem(rumblerEnabledItem);
             MainMenu.AddItem(rumblerActiveItem);
@@ -153,7 +158,7 @@ namespace CustomELSSirens
             controllerSupportItem = new UIMenuCheckboxItem("~c~Controller Support", PluginConfig.EnableControllerSupport, "Enables Controller inputs for toggling sirens (DPad Down, DPad Right, B).");
             useElsKeybindsItem = new UIMenuCheckboxItem("~c~Use ELS Keybinds", PluginConfig.UseElsKeybinds, "If enabled, directly imports and syncs your controls from the root directory ELS.ini on startup.");
             hornInterruptItem = new UIMenuCheckboxItem("~c~Horn Interrupts Siren", PluginConfig.HornInterruptsSiren, "If enabled, the horn stops the primary siren. Releasing the horn restarts the selected tone from the beginning.");
-            hornCycleItem = new UIMenuCheckboxItem("~c~Horn Cycles Siren", PluginConfig.HornCyclesSiren, "Each horn press selects the next available main tone, like the tone-cycle key. With horn interruption enabled, the next tone starts on release. An inactive main siren stays off; FIAMMS is unaffected.");
+            debugItem = new UIMenuCheckboxItem("~c~DEBUG", PluginConfig.Debug, "Global live vehicle status in the top-right corner: sirens, WAVs, horn routing, rumbler, FIAMMS, lights and extras. Hidden on foot.");
 
             reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
             reverbIntensityItem.Value = PluginConfig.ReverbIntensity * 100f;
@@ -178,7 +183,7 @@ namespace CustomELSSirens
             SettingsMenu.AddItem(controllerSupportItem);
             SettingsMenu.AddItem(useElsKeybindsItem);
             SettingsMenu.AddItem(hornInterruptItem);
-            SettingsMenu.AddItem(hornCycleItem);
+            SettingsMenu.AddItem(debugItem);
             SettingsMenu.AddItem(reverbIntensityItem);
             SettingsMenu.AddItem(maxDistanceItem);
             SettingsMenu.AddItem(aiCutoffItem);
@@ -257,9 +262,10 @@ namespace CustomELSSirens
                     PluginConfig.HornInterruptsSiren = checkedState;
                     PluginConfig.SaveConfig();
                 }
-                if (item == hornCycleItem)
+                if (item == debugItem)
                 {
-                    PluginConfig.HornCyclesSiren = checkedState;
+                    PluginConfig.Debug = checkedState;
+                    if (!checkedState) DebugOverlay.Hide();
                     PluginConfig.SaveConfig();
                 }
             };
@@ -392,7 +398,7 @@ namespace CustomELSSirens
                 controllerSupportItem.Checked = PluginConfig.EnableControllerSupport;
                 useElsKeybindsItem.Checked = PluginConfig.UseElsKeybinds;
                 hornInterruptItem.Checked = PluginConfig.HornInterruptsSiren;
-                hornCycleItem.Checked = PluginConfig.HornCyclesSiren;
+                debugItem.Checked = PluginConfig.Debug;
                 masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
                 aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
                 aiScanIntervalItem.Value = PluginConfig.AiScanInterval;
@@ -449,6 +455,8 @@ namespace CustomELSSirens
                 lightStageTrackingItem.Checked = profile.StageTracking;
                 customStageAmountItem.Value = profile.StageCount;
                 customStageAmountItem.Enabled = profile.StageTracking;
+                hornCycleItem.Index = (int)profile.HornCycle;
+                hornCycleItem.Enabled = modeItem.Index != 0;
                 rumblerEnabledItem.Checked = profile.RumblerEnabled;
                 for (int i = 0; i < extraItems.Length; i++)
                 {
@@ -510,6 +518,7 @@ namespace CustomELSSirens
             ini.Write("Settings", "CustomLightStageAmount", customStageAmountItem.Value.ToString());
             if (modeItem.Index != 0)
             {
+                ini.Write("Settings", "HornCycleMode", ((HornCycleMode)hornCycleItem.Index).ToString());
                 int[] extras = extraItems.Select(item => item.Value).ToArray();
                 ExtraControls.ValidateMappings(extras);
                 for (int i = 0; i < extras.Length; i++)

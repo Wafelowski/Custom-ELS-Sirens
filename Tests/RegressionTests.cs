@@ -39,6 +39,11 @@ internal static class RegressionTests
             Run("FIAMMS profile slots, rumbler fallback and key overrides", FiammsProfiles);
             Run("FIAMMS and main siren voices play and stop independently", IndependentLayers);
             Run("Pause freezes all mixer cursors and newly loaded voices", PausedMixer);
+            Run("Four horn routes keep sound/cycling/interrupt behavior distinct", HornModeRouting);
+            Run("Horn cycle modes are isolated to each vehicle profile", HornModeProfiles);
+            Run("DEBUG discovers and polls extras within a fixed query budget", DebugExtrasDiscovery);
+            Run("DEBUG formats current vehicle state and bounds long filenames", DebugSnapshotText);
+            Run("DEBUG distinguishes pending, playing, fading and stopped voices", DebugPlaybackStatus);
             Console.WriteLine("PASS: " + passed + " regression checks.");
             return 0;
         }
@@ -393,7 +398,7 @@ internal static class RegressionTests
         PluginConfig.Snd_SrnTon6 = System.Windows.Forms.Keys.D9;
         PluginConfig.Toggle_Rumbler = System.Windows.Forms.Keys.F11;
         PluginConfig.Toggle_FIAMMS = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F9;
-        PluginConfig.HornCyclesSiren = true;
+        PluginConfig.Debug = true;
         PluginConfig.FIAMMSVol = 0.65f;
         PluginConfig.Toggle_RedBeacon = System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.B;
         PluginConfig.Tone5Vol = 0.45f;
@@ -402,14 +407,14 @@ internal static class RegressionTests
         PluginConfig.Snd_SrnTon5 = PluginConfig.Snd_SrnTon6 = PluginConfig.Toggle_Rumbler = PluginConfig.Toggle_RedBeacon = System.Windows.Forms.Keys.None;
         PluginConfig.Tone5Vol = PluginConfig.Tone6Vol = 0;
         PluginConfig.Toggle_FIAMMS = System.Windows.Forms.Keys.None;
-        PluginConfig.HornCyclesSiren = false;
+        PluginConfig.Debug = false;
         PluginConfig.FIAMMSVol = 0;
         PluginConfig.Load();
         Check(PluginConfig.GetToneKey(5) == System.Windows.Forms.Keys.D8 && PluginConfig.GetToneKey(6) == System.Windows.Forms.Keys.D9, "New tone keybinds were lost.");
         Check(PluginConfig.Toggle_Rumbler == System.Windows.Forms.Keys.F11 && PluginConfig.Toggle_RedBeacon == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.B), "Feature keybinds were lost.");
         Check(PluginConfig.Tone5Vol == 0.45f && PluginConfig.Tone6Vol == 0.55f, "New tone volumes were lost.");
         Check(PluginConfig.Toggle_FIAMMS == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F9) && PluginConfig.FIAMMSVol == 0.65f, "FIAMMS binding/volume were lost.");
-        Check(PluginConfig.HornCyclesSiren, "Horn cycle option was lost.");
+        Check(PluginConfig.Debug, "Global DEBUG option was lost.");
     }
 
     private static void HornCycling()
@@ -562,6 +567,142 @@ internal static class RegressionTests
         output.Read(actual, 0, actual.Length);
         reference.Read(expected, 0, expected.Length);
         Check(actual.SequenceEqual(expected), "Menu mute changed the continuing-playback contract.");
+    }
+
+    private static void HornModeRouting()
+    {
+        foreach (bool interrupt in new[] { false, true })
+        {
+            foreach (bool available in new[] { false, true })
+            {
+                var car = HornModes.Resolve(HornCycleMode.CarHorn, available, interrupt);
+                Check(car.Cycle && !car.PlaySirenHorn && !car.SuppressCarHorn && car.InterruptSiren == interrupt, "Car-horn mode played/suppressed the wrong horn.");
+                var siren = HornModes.Resolve(HornCycleMode.SirenHorn, available, interrupt);
+                Check(siren.Cycle && siren.PlaySirenHorn == available && siren.SuppressCarHorn && siren.InterruptSiren == (interrupt && available), "Siren-horn mode leaked the car horn or handled an unassigned WAV incorrectly.");
+                var silent = HornModes.Resolve(HornCycleMode.Silent, available, interrupt);
+                Check(silent.Cycle && !silent.PlaySirenHorn && silent.SuppressCarHorn && !silent.InterruptSiren, "Silent mode still sounded a horn or stopped the main siren.");
+                var off = HornModes.Resolve(HornCycleMode.Off, available, interrupt);
+                Check(!off.Cycle && off.PlaySirenHorn == available && off.SuppressCarHorn == available && off.InterruptSiren == interrupt, "Off changed normal horn behavior or kept cycling enabled.");
+            }
+        }
+        var rule = new HornInterruption();
+        var behavior = HornModes.Resolve(HornCycleMode.Silent, true, true);
+        int tone = 6, stops = 0, restarts = 0, cycles = 0;
+        Action cycle = () => { cycles++; tone = ToneSlots.Next(tone, id => id == 2 || id == 6); };
+        for (int i = 0; i < 5; i++) rule.Update(true, behavior.InterruptSiren, () => stops++, () => restarts++, cycle);
+        Check(tone == 2 && cycles == 1 && stops == 0, "Silent horn press did not cycle immediately and only once.");
+        rule.Update(false, behavior.InterruptSiren, () => stops++, () => restarts++, cycle);
+        Check(restarts == 0, "Releasing a silent horn unnecessarily restarted the tone.");
+        Check(HornModes.Parse("carhorn") == HornCycleMode.CarHorn && HornModes.Parse("Silent") == HornCycleMode.Silent, "Horn mode names are case sensitive.");
+        Check(HornModes.Parse("bogus") == HornCycleMode.Off && HornModes.Parse("99") == HornCycleMode.Off && HornModes.Parse("CarHorn, SirenHorn") == HornCycleMode.Off, "Invalid or combined horn modes were accepted.");
+    }
+
+    private static void HornModeProfiles()
+    {
+        var global = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "Global.ini"));
+        global.Write("Settings", "HornCycleMode", "SirenHorn");
+        var a = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "HORN_A.ini"));
+        var b = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "HORN_B.ini"));
+        a.Create(); b.Create();
+        a.Write("Settings", "HornCycleMode", "CarHorn");
+        b.Write("Settings", "HornCycleMode", "Silent");
+        b.Write("Settings", "Debug", "false");
+        PluginConfig.Debug = true;
+        ProfileStore.Clear();
+        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.CarHorn && ProfileStore.Get("HORN_B").HornCycle == HornCycleMode.Silent, "Vehicle horn settings leaked between models.");
+        Check(ProfileStore.Get("Global").HornCycle == HornCycleMode.Off && ProfileStore.Get("HORN_UNCONFIGURED").HornCycle == HornCycleMode.Off, "Global horn mode applied to an unconfigured model.");
+        Check(PluginConfig.Debug, "A vehicle profile overrode the global DEBUG flag.");
+        a.Write("Settings", "HornCycleMode", "Off");
+        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.CarHorn, "Horn routing reread INI files during cached lookups.");
+        ProfileStore.Clear();
+        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.Off, "Profile reload did not apply the updated horn mode.");
+    }
+
+    private static void DebugExtrasDiscovery()
+    {
+        var vehicle = new DebugExtrasFixture();
+        var tracker = new DebugExtraTracker();
+        int[] mapped = { 220, -1, -1, -1 };
+        int[] enabled = tracker.Refresh(vehicle, mapped);
+        Check(enabled.SequenceEqual(new[] { 0, 220 }), "DEBUG missed a native active extra or a high mapped ID.");
+        Check(vehicle.ExistenceQueries <= 20 && tracker.IsScanning, "DEBUG scanned all IDs in the first frame.");
+        vehicle.SetEnabled(5, true);
+        for (int i = 0; i < 15; i++)
+        {
+            int before = vehicle.ExistenceQueries;
+            enabled = tracker.Refresh(vehicle, mapped);
+            Check(vehicle.ExistenceQueries - before <= 20, "Extra discovery exceeded its refresh budget.");
+        }
+        Check(!tracker.IsScanning && enabled.SequenceEqual(new[] { 0, 5, 220 }), "Progressive extra discovery failed to finish or missed a state change.");
+        vehicle.SetEnabled(220, false);
+        enabled = tracker.Refresh(vehicle, mapped);
+        Check(enabled.SequenceEqual(new[] { 0, 5 }) && tracker.Exists(220), "DEBUG confused a disabled extra with a missing extra.");
+        var replacement = new DebugExtrasFixture();
+        replacement.Values.Clear(); replacement.Values[2] = true;
+        enabled = new DebugExtraTracker().Refresh(replacement, new[] { -1, -1, -1, -1 });
+        Check(enabled.SequenceEqual(new[] { 2 }), "Changing vehicle retained the previous vehicle's extras.");
+    }
+
+    private static void DebugSnapshotText()
+    {
+        var state = new VehicleDebugState
+        {
+            Model = "POLICE", Output = "PAUSED", MasterVolume = 0.5f,
+            HornMode = HornCycleMode.Silent, NativeHornSuppressed = true,
+            RumblerEnabled = true, RumblerOn = true, FiammsOn = true,
+            SirenFlag = true, LightGate = true, StageTracking = true, Stage = 3, StageCount = 3,
+            Voices = new[]
+            {
+                new DebugVoiceState { Name = "Tone6", Status = "PLAYING", Sound = "tone6.wav" },
+                new DebugVoiceState { Name = "Siren horn", Status = "OFF", Sound = "horn.wav" },
+                new DebugVoiceState { Name = "Manual", Status = "OFF", Sound = "None" },
+                new DebugVoiceState { Name = "FIAMMS", Status = "LOADING", Sound = new string('x', 200) + ".wav" }
+            },
+            MappedExtras = new[] { 0, 3, -1, 250 },
+            MappedExists = new[] { true, true, false, false },
+            MappedEnabled = new[] { true, false, false, false },
+            EnabledExtras = new[] { 0, 5, 6, 7, 200 }, ScanningExtras = false
+        };
+        string text = DebugText.Build(state);
+        Check(text.Contains("Vehicle: POLICE") && text.Contains("Tone6: PLAYING") && text.Contains("Audio: PAUSED"), "DEBUG omitted the current vehicle, tone or pause state.");
+        Check(text.Contains("Rumbler: ON") && text.Contains("FIAMMS toggle: ON") && text.Contains("FIAMMS: LOADING"), "DEBUG omitted feature or loading states.");
+        Check(text.Contains("Red beacon: extra 0: ON") && text.Contains("Matrix text 1: extra 3: OFF") && text.Contains("Matrix text 2: UNASSIGNED") && text.Contains("Matrix text 3: extra 250: MISSING"), "DEBUG extra labels did not reflect mapped native states.");
+        Check(text.Contains("All enabled extras: 0, 5-7, 200"), "DEBUG omitted enabled extras outside the four mappings.");
+        Check(text.Split(new[] { Environment.NewLine }, StringSplitOptions.None).All(line => line.Length <= 64), "A long WAV filename overflowed the DEBUG text column.");
+        Check(DebugText.Build(null) == string.Empty, "A missing current vehicle produced visible debug text.");
+    }
+
+    private static void DebugPlaybackStatus()
+    {
+        var fake = new FakeOutput(true);
+        AudioEngine.Start(() => fake);
+        try
+        {
+            Check(fake.InitEntered.Wait(1000), "Audio worker did not reach the blocked device.");
+            var voice = new SirenPlayer();
+            voice.Play(Constant(), true, 1f);
+            voice.TargetVolume = 1f;
+            Check(voice.DebugStatus == "LOADING", "A pending request was reported as playing.");
+            fake.AllowInit.Set();
+            AudioEngine.SetMuted(false);
+            Check(SpinWait.SpinUntil(() => voice.DebugStatus == "PLAYING", 2000), "A started voice still reported loading.");
+            AudioEngine.SetPaused(true);
+            Check(AudioEngine.DebugStatus == "PAUSED", "DEBUG did not report the global pause gate.");
+            voice.Stop(false);
+            Check(voice.DebugStatus == "FADING OUT", "DEBUG did not report fade state.");
+            voice.Stop(true);
+            Check(voice.DebugStatus == "OFF", "A cancelled voice still appeared enabled.");
+        }
+        finally { fake.AllowInit.Set(); AudioEngine.Shutdown(); }
+    }
+
+    private sealed class DebugExtrasFixture : IVehicleExtras
+    {
+        internal readonly System.Collections.Generic.Dictionary<int, bool> Values = new System.Collections.Generic.Dictionary<int, bool> { { 0, true }, { 5, false }, { 220, true } };
+        internal int ExistenceQueries;
+        public bool Exists(int id) { ExistenceQueries++; return Values.ContainsKey(id); }
+        public bool IsEnabled(int id) => Values[id];
+        public void SetEnabled(int id, bool enabled) { Values[id] = enabled; }
     }
 
     private sealed class FakeExtras : IVehicleExtras

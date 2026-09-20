@@ -1,14 +1,14 @@
-# Custom ELS Sirens — 1.10.0.0
+# Custom ELS Sirens — 1.11.0.0
 
-This revision adds an independent FIAMMS siren layer, optional horn tone cycling, and true audio pause. Player panic/auto-scan controls are removed. Six selectable main tones, normal/rumbler banks, and beacon/matrix extra controls remain. One persistent stereo output mixes all custom voices; WAV decoding and audio-device work stay on a background worker. No vehicle or RAGE native calls run on that worker.
+This revision adds four per-vehicle horn cycling modes and a global DEBUG overlay for the player's current vehicle. Six main tones, normal/rumbler WAV banks, independent FIAMMS, beacon/matrix extras, and true audio pause remain. One persistent stereo output mixes all custom voices; WAV decoding and audio-device work stay on a background worker. No vehicle or RAGE native calls run on that worker.
 
 ## Verification status
 
-- All 13 C# source files passed parser syntax checks.
+- All 15 C# source files passed parser syntax checks.
 - Both project files are valid XML; every included source file and bundled dependency path resolves.
 - The new NAudio API names were checked against the bundled DLL metadata strings. This is not a type-checked compilation.
 - **Compilation, regression-test execution, and GTA V playback were not possible in the editing environment.** The local .NET runtime could not initialize, and GTA V/RAGE Plugin Hook are unavailable. No rebuilt plugin DLL is included.
-- `Tests/` contains 21 regression checks against the actual audio/configuration/playback-rule source and bundled NAudio DLLs. It substitutes a fake output device and small RAGE test doubles, and does not play sound or load the game. New checks cover FIAMMS profiles and independent layering, horn cycle/interrupt ordering, pause/resume sample continuity, and voices loaded during pause. Existing audio, rumbler, six-tone, extra, modifier, and save/reload checks remain. Native vehicle-extra calls and menu behavior still require in-game verification.
+- `Tests/` contains 26 regression checks against the actual audio/configuration/playback/debug source and bundled NAudio DLLs. It substitutes a fake output device and small RAGE test doubles, and does not play sound or load the game. New checks cover all four horn routes, per-model setting isolation, bounded extra discovery, debug text, and voice status reporting. Existing audio, FIAMMS, rumbler, six-tone, pause, extra, modifier, and save/reload checks remain. Native horn/extra behavior, menu behavior, and overlay rendering still require in-game verification.
 
 ## Build on Windows
 
@@ -54,9 +54,36 @@ Assign **FIAMMS** and its volume in the vehicle's normal WAV bank, then **Save P
 
 FIAMMS has its own `[Sirens] FIAMMS` filename and `[SirenVolumes] FIAMMSVol` value. An optional `[RumblerSirens] FIAMMS` and `[RumblerVolumes] FIAMMSVol` select its alternate WAV/volume when rumbler is on. An unassigned alternate falls back to the normal FIAMMS WAV. Setting FIAMMS to None in both banks leaves it unavailable. Its toggle key is `Toggle_FIAMMS`, with the same per-vehicle/global override rules as rumbler.
 
-Enable **Misc Settings > Horn Cycles Siren**, or set `[Settings] HornCyclesSiren=true` in Config.ini, to advance the active main siren once per horn press. It uses the same six-slot cycling rule as `Snd_SrnTonX`, skips empty slots, and wraps around. With `HornInterruptsSiren=true`, the horn stops the main voice and release starts the newly selected tone from the beginning. With interruption disabled, the tone changes immediately while the horn plays. The horn still sounds normally, FIAMMS stays independent, and an inactive main siren stays off. Horn cycling defaults to false.
+For horn cycling, enter the vehicle, select **F10 > Profile Mode > Vehicle Specific**, choose **Horn Cycles Siren**, then **Save Profile**. The selector is disabled in Global Default mode. Each vehicle model stores its own choice under `[Settings] HornCycleMode` in its profile:
+
+| Menu option | INI value | Behavior |
+| --- | --- | --- |
+| With horn (car horn) | `CarHorn` | Play the native car horn and cycle the main tone; suppress the custom siren-horn WAV. |
+| With horn (siren horn) | `SirenHorn` | Play the profile's Airhorn/Horn WAV and cycle the main tone; suppress the native car horn. |
+| Off | `Off` | Disable horn cycling. Keep ordinary horn behavior: custom Horn WAV if assigned, otherwise native horn. |
+| Without horn | `Silent` | Suppress both horns and cycle the main tone immediately, without interrupting it while the key is held. |
+
+Cycling happens once per horn press using the same six-slot rule as `Snd_SrnTonX`, skipping unassigned slots and wrapping around. In the audible modes, the global **Horn Interrupts Siren** setting still controls timing: when enabled, the next tone starts from the beginning on release; when disabled, it changes immediately. FIAMMS stays independent, and an inactive main siren stays off. If SirenHorn mode has no usable Horn WAV, cycling is silent and a notification explains the missing assignment. Rumbler selects its alternate Horn WAV when one is configured.
+
+Unconfigured or invalid modes default to Off. Modes are never inherited from Global.ini or Config.ini. The old global `HornCyclesSiren` setting is ignored and can be removed; set each vehicle profile's new mode explicitly. Cars of the same model share the saved profile.
 
 `Snd_SrnTonX` remains available (default number-row 6, or your ELS binding). `Snd_SrnPnic` and `Snd_SrnScan` are no longer read, written, imported, or processed; old INI entries can be deleted. Player auto-scan is removed. Pressing a main tone key toggles that tone on/off; the controller's D-pad Down still toggles the main siren on/off using the first configured tone. D-pad Right cycles it. Nearby AI keep their existing automatic tone rotation.
+
+## DEBUG overlay
+
+Toggle **F10 > Misc Settings > DEBUG** to enable or disable the overlay immediately. The global setting is saved as `[Settings] Debug=true/false` in `Plugins\CustomSirens\Config.ini` and defaults to false. It is independent of the selected profile and automatically hides when the player leaves the vehicle.
+
+The panel appears in the upper-right corner and shows:
+
+- Current vehicle model, audio output/pause/menu-mute state, and master volume.
+- Selected main tone, siren horn, manual and FIAMMS playback states, including loading, muted, fading, and stopped-for-horn states, plus WAV filenames.
+- Horn cycling mode, native horn input/suppression, rumbler ON/OFF, and FIAMMS ON/OFF.
+- Vehicle siren flag, light restriction readiness, and tracked light stage.
+- Actual ON/OFF states for the configured beacon/matrix extras, including unassigned/missing mappings, plus every discovered enabled extra ID on the current vehicle.
+
+The vehicle siren flag reports GTA's vehicle state; the car-horn row reports the native horn input/routing. These do not claim that audio controlled by another plugin is audible. Audio marked PLAYING may be globally paused or menu-muted; the Audio row shows that shared output state.
+
+Status refreshes at most ten times per second. Mapped extras are checked immediately; discovery of the other possible IDs is spread across updates and briefly shows “scanning”. Only existing extras are polled after discovery. Text layout is reused while unchanged, and the render callback draws an immutable snapshot without calling natives or accessing entities. No extra discovery runs while DEBUG is disabled. Rendering errors hide the overlay and log once without stopping siren processing; toggle DEBUG off/on to retry.
 
 ## Game pause
 
@@ -134,11 +161,14 @@ After a successful Windows build and regression run:
 9. Test an empty/corrupt WAV and inspect `[CustomSirens]` console messages. Repair it and use Reload WAV Files before retrying.
 10. Unload/reload the plugin and confirm sound stops. If practical, disconnect/reconnect the output device and check recovery.
 11. Assign FIAMMS, save, and toggle it with F9 and the menu. Check it layers with every main tone and continues during horn/manual use and main-siren off. Check its rumbler WAV/volume, light restriction, driver-exit cutoff, and cleanup on vehicle change/reload. Toggle it off while an uncached WAV is loading and check it does not start later.
-12. Enable Horn Cycles Siren. Tap, hold, and release the horn through all configured tones, including wraparound and unassigned slots. Check both interruption settings and a main siren that is off. Hold the horn across menu closure, vehicle entry, or pause/resume and check there is no extra cycle.
+12. Save different horn modes for two vehicle models. Check all four modes: native-only horn, WAV-only horn, ordinary horn without cycling, and silent immediate cycling. Verify custom/native horns do not leak into the wrong modes, including addon vehicles. Test both interruption settings, a missing Horn WAV, wraparound/empty slots, rumbler ON, and a main siren that is off. Hold the horn across menu closure, vehicle entry, or pause/resume and check there is no extra cycle. Reload and confirm each model retains its own mode.
 13. Play main + FIAMMS with nearby AI, then pause for several seconds. Confirm all custom audio becomes silent and resumes from the same positions. Repeat with horn/manual held, release them during pause, and resume. Test pausing while a new WAV loads and while the F10 menu is open.
+14. Enable DEBUG while driving and change tones, horn mode, rumbler, FIAMMS, volume, light stages and extras. Confirm the upper-right status follows the current vehicle, reports unmapped active extras, and refreshes after another plugin changes an extra. Exit, switch vehicles, disable DEBUG, pause/resume, and reload the plugin; check stale vehicle text is never left on foot. Check readability at your game resolution and confirm unchanged frame pacing.
 
 The ELS VCF patch action remains manual. Backups now preserve the source subfolder structure, preventing same-named VCF files from sharing a backup path. Existing backups are not overwritten.
 
 ## Reference
 
 The resampling choice follows NAudio's managed [resampling documentation](https://github.com/naudio/NAudio/blob/main/Docs/Resampling.md). Runtime dependencies remain the binaries supplied with this project.
+
+The overlay uses RAGE's documented [DrawText API](https://docs.ragepluginhook.net/html/M_Rage_Graphics_DrawText.htm) and [RawFrameRender event](https://docs.ragepluginhook.net/html/E_Rage_Game_RawFrameRender.htm); all native/entity reads stay outside that render callback, as required by the event documentation.

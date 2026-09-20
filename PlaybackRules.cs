@@ -4,6 +4,44 @@ using System.Windows.Forms;
 
 namespace CustomELSSirens
 {
+    internal enum HornCycleMode { Off, CarHorn, SirenHorn, Silent }
+
+    internal struct HornBehavior
+    {
+        internal bool Cycle;
+        internal bool PlaySirenHorn;
+        internal bool SuppressCarHorn;
+        internal bool InterruptSiren;
+    }
+
+    internal static class HornModes
+    {
+        internal static readonly string[] Labels = { "Off", "With horn (car horn)", "With horn (siren horn)", "Without horn" };
+
+        internal static HornCycleMode Parse(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value) || value.IndexOf(',') >= 0) return HornCycleMode.Off;
+            return Enum.TryParse(value, true, out HornCycleMode mode) && Enum.IsDefined(typeof(HornCycleMode), mode)
+                ? mode : HornCycleMode.Off;
+        }
+
+        internal static HornBehavior Resolve(HornCycleMode mode, bool hasSirenHorn, bool interrupt)
+        {
+            switch (mode)
+            {
+                case HornCycleMode.CarHorn:
+                    return new HornBehavior { Cycle = true, InterruptSiren = interrupt };
+                case HornCycleMode.SirenHorn:
+                    return new HornBehavior { Cycle = true, PlaySirenHorn = hasSirenHorn, SuppressCarHorn = true, InterruptSiren = interrupt && hasSirenHorn };
+                case HornCycleMode.Silent:
+                    return new HornBehavior { Cycle = true, SuppressCarHorn = true };
+                default:
+                    // Off disables cycling, preserving the normal horn route.
+                    return new HornBehavior { PlaySirenHorn = hasSirenHorn, SuppressCarHorn = hasSirenHorn, InterruptSiren = interrupt };
+            }
+        }
+    }
+
     internal static class ToneSlots
     {
         internal const int Count = 6;

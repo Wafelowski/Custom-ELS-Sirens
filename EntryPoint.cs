@@ -18,6 +18,7 @@ namespace CustomELSSirens
                 PluginConfig.Load();
                 AudioEngine.Start();
                 MenuManager.SetupMenu();
+                DebugOverlay.Start();
                 Game.DisplayNotification($"~b~Custom Sirens~w~ initialized. Press ~y~{PluginConfig.MenuKey}~w~ or use console for the menu.");
                 while (true)
                 {
@@ -27,6 +28,7 @@ namespace CustomELSSirens
                         Game.Console.Print("[CustomSirens] " + message);
                     MenuManager.Process();
                     SirenManager.ProcessLoop();
+                    DebugOverlay.Update();
                 }
             }
             catch (ThreadAbortException) { }
@@ -36,6 +38,7 @@ namespace CustomELSSirens
             }
             finally
             {
+                DebugOverlay.Shutdown();
                 SirenManager.Shutdown();
             }
         }

@@ -139,8 +139,7 @@ namespace CustomELSSirens
                 if (inVehicle && !isMenuOpen) HandleVehicleFeatures();
                 else featureInputSuppressed = true;
 
-                string hornProfile = GetLocalSiren("Horn");
-                bool hasCustomHorn = IsSoundAvailable(hornProfile);
+                HornBehavior horn = GetHornBehavior();
 
                 bool isEmergency = currentVehicle.HasSiren ||
                                    currentVehicle.Class == VehicleClass.Emergency ||
@@ -150,16 +149,17 @@ namespace CustomELSSirens
 
                 if (isEmergency)
                 {
-                    if (inVehicle && currentVehicle.HasSiren && hasCustomHorn)
+                    if (inVehicle)
                     {
-                        Game.DisableControlAction(0, GameControl.VehicleHorn, true);
+                        // Also cover addon vehicles whose HasSiren flag is false.
+                        Game.DisableControlAction(0, GameControl.VehicleHorn, horn.SuppressCarHorn || isMenuOpen);
                     }
 
                     bool isLightsOn = IsVehicleLightsOn(currentVehicle);
 
                     if (inVehicle && !isMenuOpen)
                     {
-                        HandleInputs(currentVehicle, isLightsOn);
+                        HandleInputs(currentVehicle, isLightsOn, horn);
                         isLightsOn = IsVehicleLightsOn(currentVehicle);
                     }
                     else
@@ -273,6 +273,7 @@ namespace CustomELSSirens
 
             currentTrackedStage = 0;
             wasLstKey = false;
+            manualVolumeKey = "ManualVol";
         }
 
         internal static bool TimeReached(uint now, uint deadline) => unchecked((int)(now - deadline)) >= 0;
@@ -395,15 +396,29 @@ namespace CustomELSSirens
 
         public static void UpdateCachedVolume(string modelName, string key, float value, bool rumbler = false) => ProfileStore.SetVolume(modelName, key, value, rumbler);
 
-        private static void HandleInputs(Vehicle veh, bool isLightsOn)
+        private static HornBehavior GetHornBehavior()
         {
-            bool isHornPressed = NativeFunction.Natives.IS_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn) ||
-                                 NativeFunction.Natives.IS_DISABLED_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn);
-            if (isHornPressed && !wasHorn) PlayHorn();
+            return HornModes.Resolve(ProfileStore.Get(CurrentVehicleModel).HornCycle,
+                IsSoundAvailable(GetLocalSiren("Horn")), PluginConfig.HornInterruptsSiren);
+        }
+
+        private static bool ReadHornInput() => NativeFunction.Natives.IS_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn) ||
+            NativeFunction.Natives.IS_DISABLED_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn);
+
+        private static void HandleInputs(Vehicle veh, bool isLightsOn, HornBehavior horn)
+        {
+            bool isHornPressed = ReadHornInput();
+            if (isHornPressed && !wasHorn)
+            {
+                if (horn.PlaySirenHorn) PlayHorn();
+                else activeHorn.Stop(true);
+                if (ProfileStore.Get(CurrentVehicleModel).HornCycle == HornCycleMode.SirenHorn && !horn.PlaySirenHorn)
+                    Game.DisplayNotification("~y~Siren horn WAV is unassigned/unavailable. Tone cycling will be silent.");
+            }
             else if (!isHornPressed && wasHorn) activeHorn.Stop(true);
             wasHorn = isHornPressed;
-            hornInterruption.Update(isHornPressed, PluginConfig.HornInterruptsSiren, stopPrimarySiren, playPrimarySiren,
-                PluginConfig.HornCyclesSiren && isLightsOn && !hornCycleInputSuppressed ? cyclePrimarySiren : null);
+            hornInterruption.Update(isHornPressed, horn.InterruptSiren, stopPrimarySiren, playPrimarySiren,
+                horn.Cycle && isLightsOn && !hornCycleInputSuppressed ? cyclePrimarySiren : null);
             hornCycleInputSuppressed = false;
 
 
@@ -512,6 +527,7 @@ namespace CustomELSSirens
 
         private static void PlayHorn()
         {
+            if (!GetHornBehavior().PlaySirenHorn) { activeHorn.Stop(true); return; }
             activeHorn.Play(GetCachedSound(GetLocalSiren("Horn")), true, GetLocalVolume("HornVol"));
         }
 
@@ -583,6 +599,63 @@ namespace CustomELSSirens
                     player.IsInAnyVehicle(false) && player.CurrentVehicle == currentVehicle;
             }
         }
+
+        internal static Vehicle DebugVehicle
+        {
+            get
+            {
+                Ped player = Game.LocalPlayer.Character;
+                if (player == null || !player.IsValid() || !player.IsInAnyVehicle(false)) return null;
+                Vehicle vehicle = player.CurrentVehicle;
+                return vehicle != null && vehicle.IsValid() ? vehicle : null;
+            }
+        }
+
+        internal static VehicleDebugState CaptureDebugState()
+        {
+            Vehicle vehicle = DebugVehicle;
+            if (vehicle == null) return null;
+            bool tracked = vehicle == currentVehicle;
+            string model = tracked ? CurrentVehicleModel : GetVehicleModelName(vehicle);
+            var profile = ProfileStore.Get(model);
+            bool rumbler = GetRumblerState(vehicle, model);
+            string sound(string key) => profile.GetSound(key, rumbler);
+            HornBehavior horn = HornModes.Resolve(profile.HornCycle, IsSoundAvailable(sound("Horn")), PluginConfig.HornInterruptsSiren);
+            string mainKey = tracked && activeToneIndex > 0 ? ToneSlots.Keys[activeToneIndex - 1] : null;
+            var main = DebugVoice(tracked ? activeSiren : null, mainKey ?? "Main siren", mainKey == null ? "None" : sound(mainKey));
+            if (mainKey != null && hornInterruption.IsActive) main.Status = "STOPPED FOR HORN";
+            return new VehicleDebugState
+            {
+                Model = model,
+                Output = AudioEngine.DebugStatus,
+                MasterVolume = PluginConfig.MasterVolume,
+                HornMode = profile.HornCycle,
+                NativeHornPressed = ReadHornInput(),
+                NativeHornSuppressed = horn.SuppressCarHorn || MenuManager.IsAnyMenuOpen,
+                SirenFlag = vehicle.IsSirenOn,
+                LightGate = IsVehicleLightsOn(vehicle),
+                StageTracking = profile.StageTracking,
+                Stage = tracked ? currentTrackedStage : 0,
+                StageCount = profile.StageCount,
+                RumblerEnabled = profile.RumblerEnabled,
+                RumblerOn = rumbler,
+                FiammsOn = tracked && CurrentFiammsActive,
+                Voices = new[]
+                {
+                    main,
+                    DebugVoice(tracked ? activeHorn : null, "Siren horn", sound("Horn")),
+                    DebugVoice(tracked ? activeManual : null, "Manual", sound(tracked && activeManual.IsPlaying ? manualVolumeKey.Substring(0, manualVolumeKey.Length - 3) : "Manual")),
+                    DebugVoice(tracked ? activeFiamms : null, "FIAMMS", sound("FIAMMS"))
+                },
+                MappedExtras = (int[])profile.Extras.Clone()
+            };
+        }
+
+        private static DebugVoiceState DebugVoice(SirenPlayer player, string name, string assignedSound)
+        {
+            return new DebugVoiceState { Name = name, Status = player?.DebugStatus ?? "OFF", Sound = player?.DebugSoundPath ?? assignedSound };
+        }
+
         internal static bool CurrentRumblerActive => GetRumblerState(currentVehicle, CurrentVehicleModel);
         internal static bool CurrentRumblerAvailable => CanControlCurrentVehicle && ProfileStore.Get(CurrentVehicleModel).RumblerEnabled;
         private static bool GetRumblerState(Vehicle vehicle, string model)

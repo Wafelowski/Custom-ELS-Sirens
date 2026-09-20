@@ -16,6 +16,7 @@ namespace CustomELSSirens
             internal bool LightRestriction;
             internal bool StageTracking;
             internal int StageCount;
+            internal HornCycleMode HornCycle;
             internal bool RumblerEnabled;
             internal Keys RumblerKey;
             internal Keys FiammsKey;
@@ -62,6 +63,9 @@ namespace CustomELSSirens
                 global.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking));
             profile.StageCount = Math.Max(1, Math.Min(4, ini.ReadInt32("Settings", "CustomLightStageAmount",
                 global.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount))));
+            // Horn routing is explicitly per model; never inherit a global mode.
+            profile.HornCycle = profile.HasOwnProfile && !model.Equals("Global", StringComparison.OrdinalIgnoreCase)
+                ? HornModes.Parse(ini.ReadString("Settings", "HornCycleMode", "Off")) : HornCycleMode.Off;
             profile.RumblerEnabled = ini.ReadBoolean("Rumbler", "Enabled", global.ReadBoolean("Rumbler", "Enabled", false));
             profile.RumblerKey = ini.ReadEnum("Keybinds", "Toggle_Rumbler", global.ReadEnum("Keybinds", "Toggle_Rumbler", PluginConfig.Toggle_Rumbler));
             profile.FiammsKey = ini.ReadEnum("Keybinds", "Toggle_FIAMMS", global.ReadEnum("Keybinds", "Toggle_FIAMMS", PluginConfig.Toggle_FIAMMS));

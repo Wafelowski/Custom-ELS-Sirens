@@ -1,3 +1,14 @@
+# 1.11.0.0
+
+## Per-vehicle horn routing and DEBUG
+
+- Replaced the global horn-cycle checkbox with a Vehicle Specific profile selector: native car horn, custom siren horn, Off, or silent cycling. Saved as Settings/HornCycleMode; Global.ini/Config.ini no longer control the mode.
+- Route the horn independently of the main tone cycle. Silent mode suppresses native/custom horns and cycles immediately without stopping the main siren. Car-horn mode allows native input and skips the WAV; siren-horn mode suppresses native input and uses the profile/rumbler Horn WAV. Off keeps ordinary horn behavior without cycling.
+- Apply native horn suppression to addon vehicles without a HasSiren flag. Missing custom Horn WAVs in siren-horn mode cycle silently with a notification. Retain once-per-press input behavior, empty-slot skipping, main-siren-off behavior and FIAMMS independence.
+- Added the global Debug setting and Misc Settings DEBUG checkbox. A top-right overlay shows current vehicle audio states/files, output status, horn route, rumbler/FIAMMS toggles, lights and actual extra states; it hides on foot or when disabled.
+- Discover extra IDs progressively, refresh status at 10 Hz, and reuse text layout. The render callback reads immutable snapshots only; native/entity/profile reads stay on the game fiber. Clear state on vehicle changes and unregister the render callback on unload. A debug rendering failure does not stop the sirens.
+- Added five regression checks (26 total) and updated configuration examples and acceptance checks. C# syntax, references and bundled drawing API names checked. Compilation, regression execution and in-game rendering/audio remain unverified here.
+
 # 1.10.0.0
 
 ## FIAMMS, controls, and pause

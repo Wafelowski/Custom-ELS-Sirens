@@ -29,6 +29,7 @@
     <Compile Include="..\ProfileStore.cs"><Link>ProfileStore.cs</Link></Compile>
     <Compile Include="..\PluginConfig.cs"><Link>PluginConfig.cs</Link></Compile>
     <Compile Include="..\PlaybackRules.cs"><Link>PlaybackRules.cs</Link></Compile>
+    <Compile Include="..\DebugState.cs"><Link>DebugState.cs</Link></Compile>
     <Compile Include="GameStubs.cs" />
     <Compile Include="RegressionTests.cs" />
   </ItemGroup>

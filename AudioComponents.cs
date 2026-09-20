@@ -35,6 +35,19 @@ namespace CustomELSSirens
         }
         public bool IsFadingOut { get; private set; }
 
+        internal string DebugStatus
+        {
+            get
+            {
+                var current = request;
+                if (current == null || current.Cancelled || current.Completed) return "OFF";
+                if (!current.Started) return "LOADING";
+                if (IsFadingOut) return "FADING OUT";
+                return TargetVolume > 0f ? "PLAYING" : "MUTED";
+            }
+        }
+        internal string DebugSoundPath => request?.Sound.FilePath;
+
         public void Play(CachedSound cached, bool loop, float volumeMultiplier)
         {
             Stop(true);

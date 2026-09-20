@@ -20,10 +20,10 @@ namespace CustomELSSirens
         public static Keys Snd_SrnTon3 = (Keys)51;
         public static Keys Snd_SrnTon4 = (Keys)52;
         // Keep the tone keys introduced in 1.9 compatible with existing configs.
-        public static Keys Snd_SrnTon5 = Keys.D8;
-        public static Keys Snd_SrnTon6 = Keys.D9;
-        public static Keys Toggle_Rumbler = Keys.F11;
-        public static Keys Toggle_FIAMMS = Keys.F9;
+        public static Keys Snd_SrnTon5 = Keys.D5;
+        public static Keys Snd_SrnTon6 = Keys.D6;
+        public static Keys Toggle_Rumbler = Keys.D9;
+        public static Keys Toggle_FIAMMS = Keys.D0;
         public static Keys Toggle_RedBeacon = Keys.None;
         public static Keys Toggle_MatrixText1 = Keys.None;
         public static Keys Toggle_MatrixText2 = Keys.None;
@@ -41,7 +41,7 @@ namespace CustomELSSirens
         public static int CustomLightStageAmount = 3;
         public static bool SirenLightRestriction = true;
         public static bool HornInterruptsSiren = true;
-        public static bool HornCyclesSiren = false;
+        public static bool Debug = false;
         public static float MasterVolume = 0.5f;
         public static bool AutomaticAiSirenCutoff = true;
         public static int AiScanInterval = 500;
@@ -91,7 +91,7 @@ namespace CustomELSSirens
                 EnableControllerSupport = ini.ReadBoolean("Settings", "EnableControllerSupport", EnableControllerSupport);
                 SirenLightRestriction = ini.ReadBoolean("Settings", "SirenLightRestriction", SirenLightRestriction);
                 HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
-                HornCyclesSiren = ini.ReadBoolean("Settings", "HornCyclesSiren", HornCyclesSiren);
+                Debug = ini.ReadBoolean("Settings", "Debug", Debug);
 
                 MenuKey = ini.ReadEnum("Keybinds", "MenuKey", ini.ReadEnum("Settings", "MenuKey", MenuKey));
 
@@ -235,7 +235,7 @@ namespace CustomELSSirens
             ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
             ini.Write("Settings", "SirenLightRestriction", SirenLightRestriction.ToString());
             ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
-            ini.Write("Settings", "HornCyclesSiren", HornCyclesSiren.ToString());
+            ini.Write("Settings", "Debug", Debug.ToString());
             ini.Write("Settings", "MasterVolume", MasterVolume.ToString(CultureInfo.InvariantCulture));
             ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
             ini.Write("Settings", "AiScanInterval", AiScanInterval.ToString());

@@ -79,6 +79,8 @@
     <Compile Include="ProfileStore.cs" />
     <Compile Include="PlaybackRules.cs" />
     <Compile Include="VehicleExtras.cs" />
+    <Compile Include="DebugState.cs" />
+    <Compile Include="DebugOverlay.cs" />
     <Compile Include="EntryPoint.cs" />
     <Compile Include="MenuManager.cs" />
     <Compile Include="PluginConfig.cs" />

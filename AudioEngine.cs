@@ -14,6 +14,7 @@ namespace CustomELSSirens
         internal readonly bool Loop;
         internal volatile bool Cancelled;
         internal volatile bool Completed;
+        internal volatile bool Started;
 
         internal PlaybackRequest(SirenPlayer owner, CachedSound sound, bool loop)
         {
@@ -68,6 +69,7 @@ namespace CustomELSSirens
         }
 
         internal static bool TryGetMessage(out string message) => messages.TryDequeue(out message);
+        internal static string DebugStatus => instance == null ? "STOPPED" : instance.DebugStatus;
         internal static void ClearCache() => instance?.RequestCacheClear();
 
         internal static void Shutdown()
@@ -95,7 +97,10 @@ namespace CustomELSSirens
             private int nextDeviceAttempt;
             internal volatile bool Muted = true;
             internal volatile bool Paused;
+            private volatile bool outputAvailable;
             internal volatile int Heartbeat = Environment.TickCount;
+            internal string DebugStatus => Paused ? "PAUSED" : IsSuspended() ? "SUSPENDED" :
+                !outputAvailable ? "DEVICE UNAVAILABLE" : Muted ? "MENU MUTED" : "RUNNING";
 
             internal Engine(Func<IWavePlayer> outputFactory)
             {
@@ -157,6 +162,7 @@ namespace CustomELSSirens
                             {
                                 var voice = new PlaybackVoice(request);
                                 mixer.AddMixerInput(voice);
+                                request.Started = true;
                                 voices.Add(voice);
                             }
                             catch (Exception ex)
@@ -188,6 +194,7 @@ namespace CustomELSSirens
             private void EnsureOutput()
             {
                 if (output != null && output.PlaybackState == PlaybackState.Playing) return;
+                outputAvailable = false;
                 if (unchecked(Environment.TickCount - nextDeviceAttempt) < 0) return;
                 DisposeOutput();
                 try
@@ -195,6 +202,7 @@ namespace CustomELSSirens
                     output = outputFactory();
                     output.Init(new SampleToWaveProvider(new OutputProvider(mixer, IsSuspended, () => Muted)));
                     output.Play();
+                    outputAvailable = true;
                 }
                 catch (Exception ex)
                 {
@@ -209,6 +217,7 @@ namespace CustomELSSirens
 
             private void DisposeOutput()
             {
+                outputAvailable = false;
                 var previous = output;
                 output = null;
                 if (previous == null) return;
