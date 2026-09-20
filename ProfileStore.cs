@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Windows.Forms;
 using Rage;
 
 namespace CustomELSSirens
@@ -17,11 +16,9 @@ namespace CustomELSSirens
             internal bool StageTracking;
             internal int StageCount;
             internal HornCycleMode HornCycle;
+            internal bool HornInterruptsSiren = true;
             internal bool RumblerEnabled;
-            internal Keys RumblerKey;
-            internal Keys FiammsKey;
             internal readonly int[] Extras = { -1, -1, -1, -1 };
-            internal readonly Keys[] ExtraKeys = new Keys[4];
             internal readonly Dictionary<string, string> SoundFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             internal readonly Dictionary<string, string> RumblerSoundFiles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
             internal readonly Dictionary<string, string> RumblerSounds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -63,20 +60,18 @@ namespace CustomELSSirens
                 global.ReadBoolean("Settings", "EnableLightStageTracking", PluginConfig.EnableLightStageTracking));
             profile.StageCount = Math.Max(1, Math.Min(4, ini.ReadInt32("Settings", "CustomLightStageAmount",
                 global.ReadInt32("Settings", "CustomLightStageAmount", PluginConfig.CustomLightStageAmount))));
-            // Horn routing is explicitly per model; never inherit a global mode.
-            profile.HornCycle = profile.HasOwnProfile && !model.Equals("Global", StringComparison.OrdinalIgnoreCase)
+            // Both horn settings belong to the model, never to global defaults.
+            bool isVehicleProfile = profile.HasOwnProfile && !model.Equals("Global", StringComparison.OrdinalIgnoreCase);
+            profile.HornCycle = isVehicleProfile
                 ? HornModes.Parse(ini.ReadString("Settings", "HornCycleMode", "Off")) : HornCycleMode.Off;
+            profile.HornInterruptsSiren = isVehicleProfile
+                ? ini.ReadBoolean("Settings", "HornInterruptsSiren", true) : true;
             profile.RumblerEnabled = ini.ReadBoolean("Rumbler", "Enabled", global.ReadBoolean("Rumbler", "Enabled", false));
-            profile.RumblerKey = ini.ReadEnum("Keybinds", "Toggle_Rumbler", global.ReadEnum("Keybinds", "Toggle_Rumbler", PluginConfig.Toggle_Rumbler));
-            profile.FiammsKey = ini.ReadEnum("Keybinds", "Toggle_FIAMMS", global.ReadEnum("Keybinds", "Toggle_FIAMMS", PluginConfig.Toggle_FIAMMS));
-            Keys[] defaults = { PluginConfig.Toggle_RedBeacon, PluginConfig.Toggle_MatrixText1, PluginConfig.Toggle_MatrixText2, PluginConfig.Toggle_MatrixText3 };
             for (int i = 0; i < ExtraControls.Names.Length; i++)
             {
-                string key = "Toggle_" + ExtraControls.Names[i];
-                profile.ExtraKeys[i] = ini.ReadEnum("Keybinds", key, global.ReadEnum("Keybinds", key, defaults[i]));
                 // Extra meshes differ between models. Never inherit their IDs
                 // from a global profile or silently map an unconfigured vehicle.
-                profile.Extras[i] = profile.HasOwnProfile && !model.Equals("Global", StringComparison.OrdinalIgnoreCase)
+                profile.Extras[i] = isVehicleProfile
                     ? ini.ReadInt32("VehicleExtras", ExtraControls.Names[i], -1) : -1;
             }
             int[] suppliedExtras = (int[])profile.Extras.Clone();

@@ -32,7 +32,7 @@ namespace CustomELSSirens
         private static UIMenuListItem soundSetItem;
         private static UIMenuCheckboxItem rumblerEnabledItem, rumblerActiveItem;
         private static UIMenuCheckboxItem fiammsActiveItem;
-        private static readonly UIMenuNumericScrollerItem<int>[] extraItems = new UIMenuNumericScrollerItem<int>[4];
+        private static readonly UIMenuListItem[] extraItems = new UIMenuListItem[4];
         private static UIMenuNumericScrollerItem<float> masterVolumeItem;
 
         private static UIMenuCheckboxItem lightRestrictionItem;
@@ -111,6 +111,9 @@ namespace CustomELSSirens
             hornCycleItem = new UIMenuListItem("Horn Cycles Siren", HornModes.Labels.Cast<dynamic>().ToList(), 0,
                 "Vehicle-specific. Car horn uses the native horn; siren horn uses the saved Airhorn WAV. Without horn cycles immediately and suppresses both horns. Off keeps normal horn behavior. Save Profile to apply.");
             hornCycleItem.Enabled = false;
+            hornInterruptItem = new UIMenuCheckboxItem("Horn Interrupts Siren", true,
+                "Vehicle-specific. The horn stops the main siren; releasing it restarts the selected tone from the beginning. Disable to mix both sounds. Without horn mode always cycles immediately. Save Profile to apply.");
+            hornInterruptItem.Enabled = false;
 
             masterVolumeItem = new UIMenuNumericScrollerItem<float>("~h~~y~Master Volume", "Volume Percentage for the global Volume", 0f, 100f, 5f);
             masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
@@ -119,13 +122,14 @@ namespace CustomELSSirens
             rumblerEnabledItem = new UIMenuCheckboxItem("Enable rumbler for this profile", false, "Configure both WAV sets and save this profile to allow the rumbler toggle key.");
             rumblerActiveItem = new UIMenuCheckboxItem("Rumbler active in current vehicle", false, "Switch the current vehicle between its saved normal and rumbler WAV sets. Save profile changes first.");
             fiammsActiveItem = new UIMenuCheckboxItem("FIAMMS active in current vehicle", false, "Toggle the saved FIAMMS WAV alongside the main siren. Assign its WAV and save the profile first. Honors the vehicle's siren light restriction.");
-            UIMenuItem saveItem = new UIMenuItem("~h~~g~Save Profile", "Saves both WAV sets, volumes, rumbler support, light settings and extra mappings.");
+            UIMenuItem saveItem = new UIMenuItem("~h~~g~Save Profile", "Saves both WAV sets, volumes, rumbler support, horn options, light settings and extra mappings.");
 
             MainMenu.AddItem(modeItem);
             MainMenu.AddItem(lightRestrictionItem);
             MainMenu.AddItem(lightStageTrackingItem);
             MainMenu.AddItem(customStageAmountItem);
             MainMenu.AddItem(hornCycleItem);
+            MainMenu.AddItem(hornInterruptItem);
             MainMenu.AddItem(masterVolumeItem);
             MainMenu.AddItem(rumblerEnabledItem);
             MainMenu.AddItem(rumblerActiveItem);
@@ -144,10 +148,12 @@ namespace CustomELSSirens
                 string capturedKey = key;
                 volumeItem.IndexChanged += (sender, oldIndex, newIndex) => UpdateVolSlider(capturedKey + "Vol", volumeItem.Value / 100f);
             }
+            var extraChoices = new List<dynamic> { "Disabled" };
+            extraChoices.AddRange(Enumerable.Range(ExtraControls.MinId, ExtraControls.MaxId - ExtraControls.MinId + 1).Cast<dynamic>());
             for (int i = 0; i < extraItems.Length; i++)
             {
-                extraItems[i] = new UIMenuNumericScrollerItem<int>(ExtraControls.Labels[i] + " extra ID", "Vehicle-specific mesh extra. -1 disables this option. Assign its toggle key in this vehicle's INI. Matrix text modes are mutually exclusive.", -1, ExtraControls.MaxId, 1);
-                extraItems[i].Value = -1;
+                extraItems[i] = new UIMenuListItem(ExtraControls.Labels[i] + " extra ID", extraChoices, 0,
+                    "Select Disabled or extra 1-12 for this vehicle. Assign the global toggle key in Config.ini. Matrix text modes are mutually exclusive.");
                 extraItems[i].Enabled = false;
                 MainMenu.AddItem(extraItems[i]);
             }
@@ -157,7 +163,6 @@ namespace CustomELSSirens
 
             controllerSupportItem = new UIMenuCheckboxItem("~c~Controller Support", PluginConfig.EnableControllerSupport, "Enables Controller inputs for toggling sirens (DPad Down, DPad Right, B).");
             useElsKeybindsItem = new UIMenuCheckboxItem("~c~Use ELS Keybinds", PluginConfig.UseElsKeybinds, "If enabled, directly imports and syncs your controls from the root directory ELS.ini on startup.");
-            hornInterruptItem = new UIMenuCheckboxItem("~c~Horn Interrupts Siren", PluginConfig.HornInterruptsSiren, "If enabled, the horn stops the primary siren. Releasing the horn restarts the selected tone from the beginning.");
             debugItem = new UIMenuCheckboxItem("~c~DEBUG", PluginConfig.Debug, "Global live vehicle status in the top-right corner: sirens, WAVs, horn routing, rumbler, FIAMMS, lights and extras. Hidden on foot.");
 
             reverbIntensityItem = new UIMenuNumericScrollerItem<float>("~c~Reverb Intensity", "Adjusts the strength of the city reverb effect. (Default: 100%)", 0f, 200f, 5f);
@@ -182,7 +187,6 @@ namespace CustomELSSirens
 
             SettingsMenu.AddItem(controllerSupportItem);
             SettingsMenu.AddItem(useElsKeybindsItem);
-            SettingsMenu.AddItem(hornInterruptItem);
             SettingsMenu.AddItem(debugItem);
             SettingsMenu.AddItem(reverbIntensityItem);
             SettingsMenu.AddItem(maxDistanceItem);
@@ -255,11 +259,6 @@ namespace CustomELSSirens
                 if (item == useElsKeybindsItem)
                 {
                     PluginConfig.UseElsKeybinds = checkedState;
-                    PluginConfig.SaveConfig();
-                }
-                if (item == hornInterruptItem)
-                {
-                    PluginConfig.HornInterruptsSiren = checkedState;
                     PluginConfig.SaveConfig();
                 }
                 if (item == debugItem)
@@ -397,7 +396,6 @@ namespace CustomELSSirens
             {
                 controllerSupportItem.Checked = PluginConfig.EnableControllerSupport;
                 useElsKeybindsItem.Checked = PluginConfig.UseElsKeybinds;
-                hornInterruptItem.Checked = PluginConfig.HornInterruptsSiren;
                 debugItem.Checked = PluginConfig.Debug;
                 masterVolumeItem.Value = PluginConfig.MasterVolume * 100f;
                 aiCutoffItem.Checked = PluginConfig.AutomaticAiSirenCutoff;
@@ -457,10 +455,12 @@ namespace CustomELSSirens
                 customStageAmountItem.Enabled = profile.StageTracking;
                 hornCycleItem.Index = (int)profile.HornCycle;
                 hornCycleItem.Enabled = modeItem.Index != 0;
+                hornInterruptItem.Checked = profile.HornInterruptsSiren;
+                hornInterruptItem.Enabled = modeItem.Index != 0;
                 rumblerEnabledItem.Checked = profile.RumblerEnabled;
                 for (int i = 0; i < extraItems.Length; i++)
                 {
-                    extraItems[i].Value = profile.Extras[i];
+                    extraItems[i].Index = Math.Max(0, profile.Extras[i]);
                     extraItems[i].Enabled = modeItem.Index != 0;
                 }
             }
@@ -502,7 +502,8 @@ namespace CustomELSSirens
             }
             CaptureDisplayedBank();
             string targetIni = editingModel + ".ini";
-            InitializationFile ini = new InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, targetIni));
+            string targetPath = Path.Combine(PluginConfig.ProfilesFolder, targetIni);
+            InitializationFile ini = new InitializationFile(targetPath);
             if (!ini.Exists()) ini.Create();
             for (int bank = 0; bank < 2; bank++)
             {
@@ -519,24 +520,15 @@ namespace CustomELSSirens
             if (modeItem.Index != 0)
             {
                 ini.Write("Settings", "HornCycleMode", ((HornCycleMode)hornCycleItem.Index).ToString());
-                int[] extras = extraItems.Select(item => item.Value).ToArray();
+                ini.Write("Settings", "HornInterruptsSiren", hornInterruptItem.Checked.ToString());
+                int[] extras = extraItems.Select(item => ExtraControls.ValidateId(item.Index)).ToArray();
                 ExtraControls.ValidateMappings(extras);
                 for (int i = 0; i < extras.Length; i++)
                 {
-                    if (extras[i] != extraItems[i].Value)
+                    if (extras[i] != ExtraControls.ValidateId(extraItems[i].Index))
                         Game.Console.Print("[CustomSirens] Duplicate/invalid mapping disabled: " + ExtraControls.Labels[i]);
                     ini.Write("VehicleExtras", ExtraControls.Names[i], extras[i].ToString(CultureInfo.InvariantCulture));
                 }
-            }
-            var profile = ProfileStore.Get(editingModel);
-            if (string.IsNullOrWhiteSpace(ini.ReadString("Keybinds", "Toggle_Rumbler", "")))
-                ini.Write("Keybinds", "Toggle_Rumbler", profile.RumblerKey.ToString());
-            if (string.IsNullOrWhiteSpace(ini.ReadString("Keybinds", "Toggle_FIAMMS", "")))
-                ini.Write("Keybinds", "Toggle_FIAMMS", profile.FiammsKey.ToString());
-            for (int i = 0; i < ExtraControls.Names.Length; i++)
-            {
-                string key = "Toggle_" + ExtraControls.Names[i];
-                if (string.IsNullOrWhiteSpace(ini.ReadString("Keybinds", key, ""))) ini.Write("Keybinds", key, profile.ExtraKeys[i].ToString());
             }
             if (modeItem.Index == 0)
             {

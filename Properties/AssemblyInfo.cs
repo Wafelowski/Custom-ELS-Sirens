@@ -8,9 +8,9 @@ using System.Runtime.InteropServices;
 [assembly: AssemblyTitle("CustomELSSirens")]
 [assembly: AssemblyDescription("ELS sirens with per-vehicle horn routing, live debug HUD, FIAMMS, rumbler and asynchronous audio")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Maggie Waggie")]
+[assembly: AssemblyCompany("PolishEmergencyV")]
 [assembly: AssemblyProduct("CustomELSSirens")]
-[assembly: AssemblyCopyright("Copyright ©  2026")]
+[assembly: AssemblyCopyright("Copyright © Maggie Waggie & PolishEmergencyV 2026")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -29,5 +29,5 @@ using System.Runtime.InteropServices;
 //      Build Number
 //      Revision
 //
-[assembly: AssemblyVersion("1.11.0.0")]
-[assembly: AssemblyFileVersion("1.11.0.0")]
+[assembly: AssemblyVersion("1.12.0")]
+[assembly: AssemblyFileVersion("1.12.0")]

@@ -187,7 +187,7 @@ namespace CustomELSSirens
                     }
 
                     if (!inVehicle || isMenuOpen)
-                        hornInterruption.Update(false, PluginConfig.HornInterruptsSiren, stopPrimarySiren, playPrimarySiren);
+                        hornInterruption.Update(false, horn.InterruptSiren, stopPrimarySiren, playPrimarySiren);
 
                     if (!isLightsOn && activeToneIndex != 0)
                     {
@@ -398,8 +398,9 @@ namespace CustomELSSirens
 
         private static HornBehavior GetHornBehavior()
         {
-            return HornModes.Resolve(ProfileStore.Get(CurrentVehicleModel).HornCycle,
-                IsSoundAvailable(GetLocalSiren("Horn")), PluginConfig.HornInterruptsSiren);
+            var profile = ProfileStore.Get(CurrentVehicleModel);
+            return HornModes.Resolve(profile.HornCycle,
+                IsSoundAvailable(GetLocalSiren("Horn")), profile.HornInterruptsSiren);
         }
 
         private static bool ReadHornInput() => NativeFunction.Natives.IS_CONTROL_PRESSED<bool>(0, (int)GameControl.VehicleHorn) ||
@@ -620,7 +621,7 @@ namespace CustomELSSirens
             var profile = ProfileStore.Get(model);
             bool rumbler = GetRumblerState(vehicle, model);
             string sound(string key) => profile.GetSound(key, rumbler);
-            HornBehavior horn = HornModes.Resolve(profile.HornCycle, IsSoundAvailable(sound("Horn")), PluginConfig.HornInterruptsSiren);
+            HornBehavior horn = HornModes.Resolve(profile.HornCycle, IsSoundAvailable(sound("Horn")), profile.HornInterruptsSiren);
             string mainKey = tracked && activeToneIndex > 0 ? ToneSlots.Keys[activeToneIndex - 1] : null;
             var main = DebugVoice(tracked ? activeSiren : null, mainKey ?? "Main siren", mainKey == null ? "None" : sound(mainKey));
             if (mainKey != null && hornInterruption.IsActive) main.Status = "STOPPED FOR HORN";
@@ -630,6 +631,7 @@ namespace CustomELSSirens
                 Output = AudioEngine.DebugStatus,
                 MasterVolume = PluginConfig.MasterVolume,
                 HornMode = profile.HornCycle,
+                HornInterruptsSiren = profile.HornInterruptsSiren,
                 NativeHornPressed = ReadHornInput(),
                 NativeHornSuppressed = horn.SuppressCarHorn || MenuManager.IsAnyMenuOpen,
                 SirenFlag = vehicle.IsSirenOn,
@@ -705,11 +707,11 @@ namespace CustomELSSirens
         private static void HandleVehicleFeatures()
         {
             var profile = ProfileStore.Get(CurrentVehicleModel);
-            bool rumblerDown = IsKeyDown(profile.RumblerKey);
+            bool rumblerDown = IsKeyDown(PluginConfig.Toggle_Rumbler);
             if (!featureInputSuppressed && rumblerDown && !wasRumbler && profile.RumblerEnabled)
                 SetCurrentRumbler(!CurrentRumblerActive);
             wasRumbler = rumblerDown;
-            bool fiammsDown = IsKeyDown(profile.FiammsKey);
+            bool fiammsDown = IsKeyDown(PluginConfig.Toggle_FIAMMS);
             if (!featureInputSuppressed && fiammsDown && !wasFiamms)
             {
                 if (SetCurrentFiamms(!CurrentFiammsActive))
@@ -721,7 +723,7 @@ namespace CustomELSSirens
             int requestedExtra = -1;
             for (int i = 0; i < wasExtra.Length; i++)
             {
-                bool down = IsKeyDown(profile.ExtraKeys[i]);
+                bool down = IsKeyDown(PluginConfig.GetExtraKey(i));
                 if (!featureInputSuppressed && down && !wasExtra[i] && profile.Extras[i] >= 0 && requestedExtra < 0)
                     requestedExtra = i;
                 wasExtra[i] = down;

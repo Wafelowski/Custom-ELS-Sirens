@@ -11,15 +11,22 @@ namespace CustomELSSirens
         // touches entities, natives, profile dictionaries or audio devices.
         private sealed class Snapshot
         {
-            internal readonly string Text;
-            internal readonly string[] Lines;
+            internal readonly DebugLine[] Lines;
             internal readonly Size Resolution;
             internal readonly RectangleF Panel;
             internal readonly PointF Origin;
             internal readonly float FontSize;
             internal readonly float LineHeight;
-            internal Snapshot(string text, string[] lines, Size resolution, RectangleF panel, PointF origin, float fontSize, float lineHeight)
-            { Text = text; Lines = lines; Resolution = resolution; Panel = panel; Origin = origin; FontSize = fontSize; LineHeight = lineHeight; }
+            internal Snapshot(DebugLine[] lines, Size resolution, RectangleF panel, PointF origin, float fontSize, float lineHeight)
+            { Lines = lines; Resolution = resolution; Panel = panel; Origin = origin; FontSize = fontSize; LineHeight = lineHeight; }
+
+            internal bool Matches(DebugLine[] lines, Size resolution)
+            {
+                if (Resolution != resolution || Lines.Length != lines.Length) return false;
+                for (int i = 0; i < lines.Length; i++)
+                    if (Lines[i].Text != lines[i].Text || Lines[i].Tone != lines[i].Tone || Lines[i].Bold != lines[i].Bold) return false;
+                return true;
+            }
         }
 
         private static volatile Snapshot snapshot;
@@ -93,12 +100,11 @@ namespace CustomELSSirens
                 state.MappedEnabled[i] = Array.IndexOf(state.EnabledExtras, id) >= 0;
             }
 
-            string text = DebugText.Build(state);
+            DebugLine[] lines = DebugText.BuildLines(state);
             Size resolution = Game.Resolution;
             if (resolution.Width < 160 || resolution.Height < 120) { snapshot = null; return; }
             Snapshot previous = snapshot;
-            if (previous != null && previous.Text == text && previous.Resolution == resolution) return;
-            string[] lines = text.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            if (previous != null && previous.Matches(lines, resolution)) return;
             float scale = Math.Max(0.5f, Math.Min(2f, resolution.Height / 1080f));
             float fontSize = 14f * scale;
             float padding = 12f * scale, margin = 24f * scale;
@@ -108,20 +114,37 @@ namespace CustomELSSirens
             if (fit < 1f) { fontSize *= fit; size = Measure(lines, fontSize, out lineHeight); }
             float width = size.Width + 2 * padding, height = size.Height + 2 * padding;
             float left = Math.Max(margin, resolution.Width - margin - width);
-            snapshot = new Snapshot(text, lines, resolution, new RectangleF(left, margin, width, height), new PointF(left + padding, margin + padding), fontSize, lineHeight);
+            snapshot = new Snapshot(lines, resolution, new RectangleF(left, margin, width, height), new PointF(left + padding, margin + padding), fontSize, lineHeight);
         }
 
-        private static SizeF Measure(string[] lines, float fontSize, out float lineHeight)
+        private static float BoldOffset(float fontSize) => Math.Max(0.5f, fontSize / 18f);
+
+        private static SizeF Measure(DebugLine[] lines, float fontSize, out float lineHeight)
         {
             float width = 0f;
             lineHeight = fontSize * 1.4f;
-            foreach (string line in lines)
+            foreach (DebugLine line in lines)
             {
-                SizeF size = Rage.Graphics.MeasureText(line, Font, fontSize);
-                width = Math.Max(width, size.Width);
+                SizeF size = Rage.Graphics.MeasureText(line.Text, Font, fontSize);
+                width = Math.Max(width, size.Width + (line.Bold ? BoldOffset(fontSize) : 0f));
                 lineHeight = Math.Max(lineHeight, size.Height + 2f);
             }
             return new SizeF(width, lineHeight * lines.Length);
+        }
+
+        private static Color TextColor(DebugTone tone)
+        {
+            switch (tone)
+            {
+                case DebugTone.Heading: return Color.FromArgb(255, 94, 210, 255);
+                case DebugTone.Info: return Color.FromArgb(255, 189, 168, 255);
+                case DebugTone.Active: return Color.FromArgb(255, 113, 230, 158);
+                case DebugTone.Inactive: return Color.FromArgb(255, 172, 184, 200);
+                case DebugTone.Warning: return Color.FromArgb(255, 255, 201, 106);
+                case DebugTone.Error: return Color.FromArgb(255, 255, 132, 132);
+                case DebugTone.Detail: return Color.FromArgb(255, 154, 171, 194);
+                default: return Color.FromArgb(255, 236, 243, 250);
+            }
         }
 
         private static void Draw(object sender, GraphicsEventArgs e)
@@ -130,10 +153,19 @@ namespace CustomELSSirens
             if (current == null || renderFaulted) return;
             try
             {
-                e.Graphics.DrawRectangle(current.Panel, Color.FromArgb(190, 8, 12, 18));
+                e.Graphics.DrawRectangle(current.Panel, Color.FromArgb(225, 8, 12, 18));
                 for (int i = 0; i < current.Lines.Length; i++)
-                    e.Graphics.DrawText(current.Lines[i], Font, current.FontSize,
-                        new PointF(current.Origin.X, current.Origin.Y + i * current.LineHeight), Color.FromArgb(255, 225, 240, 250));
+                {
+                    DebugLine line = current.Lines[i];
+                    var position = new PointF(current.Origin.X, current.Origin.Y + i * current.LineHeight);
+                    Color color = TextColor(line.Tone);
+                    e.Graphics.DrawText(line.Text, Font, current.FontSize, position, color);
+                    // The basic DrawText overload has no weight parameter. A
+                    // narrow second pass adds emphasis without allocating fonts.
+                    if (line.Bold)
+                        e.Graphics.DrawText(line.Text, Font, current.FontSize,
+                            new PointF(position.X + BoldOffset(current.FontSize), position.Y), color);
+                }
             }
             catch (Exception ex) { Fail(ex); }
         }

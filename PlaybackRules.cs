@@ -108,8 +108,9 @@ namespace CustomELSSirens
         internal static readonly string[] Names = { "RedBeacon", "MatrixText1", "MatrixText2", "MatrixText3" };
         internal static readonly string[] Labels = { "Red beacon", "Matrix text 1", "Matrix text 2", "Matrix text 3" };
         internal const int Disabled = -1;
-        internal const int MaxId = 255;
-        internal static int ValidateId(int id) => id >= 0 && id <= MaxId ? id : Disabled;
+        internal const int MinId = 1;
+        internal const int MaxId = 12;
+        internal static int ValidateId(int id) => id >= MinId && id <= MaxId ? id : Disabled;
 
         internal static void ValidateMappings(int[] ids)
         {

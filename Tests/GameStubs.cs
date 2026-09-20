@@ -46,6 +46,7 @@ namespace Rage
             foreach (string raw in File.ReadAllLines(path))
             {
                 string line = raw.Trim();
+                if (line.Length == 0 || line.StartsWith(";") || line.StartsWith("#")) continue;
                 if (line.StartsWith("[") && line.EndsWith("]")) section = line.Substring(1, line.Length - 2);
                 else
                 {

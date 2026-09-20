@@ -35,12 +35,14 @@ internal static class RegressionTests
             Run("Mapped extras toggle safely with exclusive matrix texts", ExtraMappings);
             Run("Unbound keys and modifier chords", ModifierKeys);
             Run("New keybinds and tone volumes survive reload", NewConfigRoundTrip);
+            Run("Feature keys use Config.ini and ignore legacy profile overrides", GlobalFeatureBindings);
+            Run("Keybind help preserves INI bytes and is not duplicated", KeybindComment);
             Run("Horn cycles once per press and restarts the next tone", HornCycling);
-            Run("FIAMMS profile slots, rumbler fallback and key overrides", FiammsProfiles);
+            Run("FIAMMS profile slots and rumbler fallback", FiammsProfiles);
             Run("FIAMMS and main siren voices play and stop independently", IndependentLayers);
             Run("Pause freezes all mixer cursors and newly loaded voices", PausedMixer);
             Run("Four horn routes keep sound/cycling/interrupt behavior distinct", HornModeRouting);
-            Run("Horn cycle modes are isolated to each vehicle profile", HornModeProfiles);
+            Run("Horn cycle and interruption settings are isolated to each vehicle profile", HornModeProfiles);
             Run("DEBUG discovers and polls extras within a fixed query budget", DebugExtrasDiscovery);
             Run("DEBUG formats current vehicle state and bounds long filenames", DebugSnapshotText);
             Run("DEBUG distinguishes pending, playing, fading and stopped voices", DebugPlaybackStatus);
@@ -328,7 +330,6 @@ internal static class RegressionTests
         ini.Write("RumblerVolumes", "Tone6Vol", "0.7");
         ini.Write("Sirens", "Horn", normalFile);
         ini.Write("RumblerSirens", "Horn", "None");
-        ini.Write("Keybinds", "Toggle_Rumbler", "Control, F11");
         ProfileStore.Clear();
         var profile = ProfileStore.Get("RUMBLERTEST");
         for (int tone = 1; tone <= 6; tone++)
@@ -338,7 +339,6 @@ internal static class RegressionTests
         }
         Check(profile.GetVolume("Tone6Vol", false) == 0.3f && profile.GetVolume("Tone6Vol", true) == 0.7f, "Rumbler volumes overwrite normal volumes.");
         Check(Path.GetFileName(profile.GetSound("Horn", true)) == normalFile, "Unassigned rumbler horn did not fall back to normal.");
-        Check(profile.RumblerKey == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F11), "Per-vehicle rumbler chord did not load.");
         ProfileStore.SetVolume("RUMBLERTEST", "Tone6Vol", 0.2f, true);
         Check(profile.GetVolume("Tone6Vol", false) == 0.3f && profile.GetVolume("Tone6Vol", true) == 0.2f, "Editing one bank changed both banks.");
         ini.Write("Rumbler", "Enabled", "false");
@@ -349,18 +349,22 @@ internal static class RegressionTests
     private static void ExtraMappings()
     {
         var vehicle = new FakeExtras();
-        int[] mappings = { 0, 3, 4, 5 };
-        Check(ExtraControls.Toggle(vehicle, mappings, 0) && vehicle.IsEnabled(0), "Extra 0/beacon did not enable.");
+        int[] mappings = { 1, 3, 4, 12 };
+        Check(ExtraControls.Toggle(vehicle, mappings, 0) && vehicle.IsEnabled(1), "Extra 1/beacon did not enable.");
         Check(ExtraControls.Toggle(vehicle, mappings, 1) && vehicle.IsEnabled(3), "Matrix text 1 did not enable.");
         ExtraControls.Toggle(vehicle, mappings, 2);
-        Check(vehicle.IsEnabled(0) && !vehicle.IsEnabled(3) && vehicle.IsEnabled(4), "Matrix text 2 did not replace text 1 independently of the beacon.");
+        Check(vehicle.IsEnabled(1) && !vehicle.IsEnabled(3) && vehicle.IsEnabled(4), "Matrix text 2 did not replace text 1 independently of the beacon.");
         ExtraControls.Toggle(vehicle, mappings, 3);
-        Check(vehicle.IsEnabled(0) && !vehicle.IsEnabled(4) && vehicle.IsEnabled(5), "Matrix text 3 did not replace text 2.");
+        Check(vehicle.IsEnabled(1) && !vehicle.IsEnabled(4) && vehicle.IsEnabled(12), "Matrix text 3/extra 12 did not replace text 2.");
         ExtraControls.Toggle(vehicle, mappings, 3);
-        Check(vehicle.IsEnabled(0) && !vehicle.IsEnabled(3) && !vehicle.IsEnabled(4) && !vehicle.IsEnabled(5), "Toggling current text did not turn it off.");
+        Check(vehicle.IsEnabled(1) && !vehicle.IsEnabled(3) && !vehicle.IsEnabled(4) && !vehicle.IsEnabled(12), "Toggling current text did not turn it off.");
         int writes = vehicle.Writes;
         Check(!ExtraControls.Toggle(vehicle, new[] { -1, -1, -1, -1 }, 0) && vehicle.Writes == writes, "Unmapped control touched vehicle extras.");
-        Check(!ExtraControls.Toggle(vehicle, new[] { 200, -1, -1, -1 }, 0) && vehicle.Writes == writes, "Missing extra was written.");
+        Check(!ExtraControls.Toggle(vehicle, new[] { 6, -1, -1, -1 }, 0) && vehicle.Writes == writes, "Missing extra was written.");
+        Check(!ExtraControls.Toggle(vehicle, new[] { 0, 13, -1, -1 }, 0) && !ExtraControls.Toggle(vehicle, new[] { 0, 13, -1, -1 }, 1) && vehicle.Writes == writes, "An existing extra outside 1-12 was written.");
+        int[] bounds = { 0, 13, 1, 12 };
+        ExtraControls.ValidateMappings(bounds);
+        Check(bounds.SequenceEqual(new[] { -1, -1, 1, 12 }), "Extra validation did not enforce the inclusive 1-12 range.");
         int[] invalid = { 3, 3, -2, 999 };
         ExtraControls.ValidateMappings(invalid);
         Check(invalid.SequenceEqual(new[] { 3, -1, -1, -1 }), "Duplicate/out-of-range mappings were not disabled.");
@@ -368,12 +372,14 @@ internal static class RegressionTests
         var global = new Rage.InitializationFile(globalPath);
         global.Write("VehicleExtras", "RedBeacon", "9");
         string path = Path.Combine(PluginConfig.ProfilesFolder, "EXTRATEST.ini");
-        File.WriteAllText(path, "[VehicleExtras]\nRedBeacon=0\nMatrixText1=3\nMatrixText2=4\nMatrixText3=5\n[Keybinds]\nToggle_MatrixText1=Control, NumPad1\n");
+        File.WriteAllText(path, "[VehicleExtras]\nRedBeacon=1\nMatrixText1=3\nMatrixText2=4\nMatrixText3=12\n");
         ProfileStore.Clear();
         var profile = ProfileStore.Get("EXTRATEST");
         Check(profile.Extras.SequenceEqual(mappings), "Per-vehicle extra mappings did not load.");
-        Check(profile.ExtraKeys[1] == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.NumPad1), "Per-vehicle extra key did not load.");
         Check(ProfileStore.Get("UNCONFIGURED").Extras.All(id => id == -1), "Global mesh IDs leaked into an unconfigured vehicle.");
+        File.WriteAllText(path, "[VehicleExtras]\nRedBeacon=0\nMatrixText1=13\nMatrixText2=1\nMatrixText3=12\n");
+        ProfileStore.Clear();
+        Check(ProfileStore.Get("EXTRATEST").Extras.SequenceEqual(new[] { -1, -1, 1, 12 }), "An invalid saved extra assignment was not disabled on reload.");
     }
 
     private static void ModifierKeys()
@@ -415,6 +421,65 @@ internal static class RegressionTests
         Check(PluginConfig.Tone5Vol == 0.45f && PluginConfig.Tone6Vol == 0.55f, "New tone volumes were lost.");
         Check(PluginConfig.Toggle_FIAMMS == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F9) && PluginConfig.FIAMMSVol == 0.65f, "FIAMMS binding/volume were lost.");
         Check(PluginConfig.Debug, "Global DEBUG option was lost.");
+        Check(File.ReadAllText(PluginConfig.ConfigFile).Contains(PluginConfig.KeybindOptionsUrl), "Generated Config.ini omitted keybind help.");
+        Check(new Rage.InitializationFile(PluginConfig.ConfigFile).ReadString("Settings", "HornInterruptsSiren", "absent") == "absent", "Config.ini still writes a global horn interruption setting.");
+    }
+
+    private static void KeybindComment()
+    {
+        var encodings = new System.Text.Encoding[]
+        {
+            new System.Text.UTF8Encoding(false), new System.Text.UTF8Encoding(true),
+            System.Text.Encoding.Unicode, System.Text.Encoding.BigEndianUnicode, System.Text.Encoding.UTF32
+        };
+        for (int i = 0; i < encodings.Length; i++)
+        {
+            var encoding = encodings[i];
+            string newline = i % 2 == 0 ? "\r\n" : "\n";
+            string body = "[Sirens]" + newline + "Tone1=syrena-\u0142.wav" + newline +
+                "[Keybinds]" + newline + "Toggle_Rumbler=Control, F11" + newline;
+            string path = Path.Combine(temporary, "keybind-comment-" + i + ".ini");
+            File.WriteAllText(path, body, encoding);
+            byte[] original = File.ReadAllBytes(path);
+            PluginConfig.EnsureKeybindComment(path);
+            byte[] updated = File.ReadAllBytes(path);
+            int bomLength = encoding.GetPreamble().Length;
+            Check(updated.Take(bomLength).SequenceEqual(original.Take(bomLength)), "Comment changed the INI byte-order mark.");
+            Check(updated.Skip(updated.Length - original.Length + bomLength).SequenceEqual(original.Skip(bomLength)), "Comment changed existing INI bytes.");
+            string contents = File.ReadAllText(path);
+            Check(contents.StartsWith("; Keybind options (Windows Forms Keys): " + PluginConfig.KeybindOptionsUrl + newline) && contents.EndsWith(body), "Keybind help used the wrong encoding or line endings.");
+            Check(new Rage.InitializationFile(path).ReadString("Keybinds", "Toggle_Rumbler", "") == "Control, F11", "Comment changed a keybind value.");
+            PluginConfig.EnsureKeybindComment(path);
+            Check(updated.SequenceEqual(File.ReadAllBytes(path)), "Repeated config loads duplicate or rewrite keybind help.");
+        }
+    }
+
+    private static void GlobalFeatureBindings()
+    {
+        string[] names = { "Toggle_Rumbler", "Toggle_FIAMMS", "Toggle_RedBeacon", "Toggle_MatrixText1", "Toggle_MatrixText2", "Toggle_MatrixText3" };
+        string[] bindings = { "Control, F11", "F9", "Control, B", "Control, NumPad1", "Control, NumPad2", "None" };
+        var config = new Rage.InitializationFile(PluginConfig.ConfigFile);
+        var global = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "Global.ini"));
+        var vehicle = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "LEGACY_KEYS.ini"));
+        vehicle.Create();
+        for (int i = 0; i < names.Length; i++)
+        {
+            config.Write("Keybinds", names[i], bindings[i]);
+            global.Write("Keybinds", names[i], "F7");
+            vehicle.Write("Keybinds", names[i], "F8");
+        }
+        PluginConfig.Load();
+        ProfileStore.Clear();
+        ProfileStore.Get("Global");
+        ProfileStore.Get("LEGACY_KEYS");
+        ProfileStore.Get("NO_KEY_PROFILE");
+        Check(PluginConfig.Toggle_Rumbler == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F11) && PluginConfig.Toggle_FIAMMS == System.Windows.Forms.Keys.F9, "A profile changed the global rumbler/FIAMMS keys.");
+        Check(PluginConfig.GetExtraKey(0) == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.B) && PluginConfig.GetExtraKey(1) == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.NumPad1) && PluginConfig.GetExtraKey(2) == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.NumPad2) && PluginConfig.GetExtraKey(3) == System.Windows.Forms.Keys.None, "A profile changed the global beacon/matrix keys or ignored None.");
+        config.Write("Keybinds", "Toggle_Rumbler", "None");
+        config.Write("Keybinds", "Toggle_FIAMMS", "Control, F12");
+        config.Write("Keybinds", "Toggle_MatrixText3", "Control, NumPad3");
+        PluginConfig.Load();
+        Check(PluginConfig.Toggle_Rumbler == System.Windows.Forms.Keys.None && PluginConfig.Toggle_FIAMMS == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F12) && PluginConfig.GetExtraKey(3) == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.NumPad3), "Reloading global feature bindings left cached vehicle bindings active.");
     }
 
     private static void HornCycling()
@@ -464,14 +529,11 @@ internal static class RegressionTests
         ini.Write("SirenVolumes", "FIAMMSVol", "0.4");
         ini.Write("RumblerVolumes", "FIAMMSVol", "0.8");
         ini.Write("Rumbler", "Enabled", "true");
-        ini.Write("Keybinds", "Toggle_FIAMMS", "Control, F8");
         ProfileStore.Clear();
         var profile = ProfileStore.Get("FIAMMSTEST");
         Check(ProfileStore.SoundKeys.Contains("FIAMMS"), "FIAMMS is absent from menu/save/preload slots.");
         Check(Path.GetFileName(profile.GetSound("FIAMMS", false)) == "fiamms.wav" && Path.GetFileName(profile.GetSound("FIAMMS", true)) == "fiamms-on.wav", "FIAMMS banks did not resolve independently.");
         Check(profile.GetVolume("FIAMMSVol", false) == 0.4f && profile.GetVolume("FIAMMSVol", true) == 0.8f, "FIAMMS bank volumes were not loaded.");
-        Check(profile.FiammsKey == (System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.F8), "Vehicle FIAMMS key did not override the config key.");
-        Check(ProfileStore.Get("UNCONFIGURED").FiammsKey == PluginConfig.Toggle_FIAMMS, "FIAMMS config key was not inherited.");
         ini.Write("RumblerSirens", "FIAMMS", "None");
         ProfileStore.Clear();
         Check(Path.GetFileName(ProfileStore.Get("FIAMMSTEST").GetSound("FIAMMS", true)) == "fiamms.wav", "Unassigned alternate FIAMMS failed to fall back to normal.");
@@ -601,30 +663,39 @@ internal static class RegressionTests
     {
         var global = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "Global.ini"));
         global.Write("Settings", "HornCycleMode", "SirenHorn");
+        global.Write("Settings", "HornInterruptsSiren", "false");
+        new Rage.InitializationFile(PluginConfig.ConfigFile).Write("Settings", "HornInterruptsSiren", "false");
+        PluginConfig.Load();
         var a = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "HORN_A.ini"));
         var b = new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "HORN_B.ini"));
         a.Create(); b.Create();
+        new Rage.InitializationFile(Path.Combine(PluginConfig.ProfilesFolder, "HORN_DEFAULT.ini")).Create();
         a.Write("Settings", "HornCycleMode", "CarHorn");
         b.Write("Settings", "HornCycleMode", "Silent");
+        a.Write("Settings", "HornInterruptsSiren", "true");
+        b.Write("Settings", "HornInterruptsSiren", "false");
         b.Write("Settings", "Debug", "false");
         PluginConfig.Debug = true;
         ProfileStore.Clear();
         Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.CarHorn && ProfileStore.Get("HORN_B").HornCycle == HornCycleMode.Silent, "Vehicle horn settings leaked between models.");
+        Check(ProfileStore.Get("HORN_A").HornInterruptsSiren && !ProfileStore.Get("HORN_B").HornInterruptsSiren, "Vehicle horn interruption settings leaked between models.");
         Check(ProfileStore.Get("Global").HornCycle == HornCycleMode.Off && ProfileStore.Get("HORN_UNCONFIGURED").HornCycle == HornCycleMode.Off, "Global horn mode applied to an unconfigured model.");
+        Check(ProfileStore.Get("Global").HornInterruptsSiren && ProfileStore.Get("HORN_UNCONFIGURED").HornInterruptsSiren && ProfileStore.Get("HORN_DEFAULT").HornInterruptsSiren, "A global horn interruption setting overrode the per-vehicle default.");
         Check(PluginConfig.Debug, "A vehicle profile overrode the global DEBUG flag.");
         a.Write("Settings", "HornCycleMode", "Off");
-        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.CarHorn, "Horn routing reread INI files during cached lookups.");
+        a.Write("Settings", "HornInterruptsSiren", "false");
+        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.CarHorn && ProfileStore.Get("HORN_A").HornInterruptsSiren, "Horn routing reread INI files during cached lookups.");
         ProfileStore.Clear();
-        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.Off, "Profile reload did not apply the updated horn mode.");
+        Check(ProfileStore.Get("HORN_A").HornCycle == HornCycleMode.Off && !ProfileStore.Get("HORN_A").HornInterruptsSiren, "Profile reload did not apply the updated horn settings.");
     }
 
     private static void DebugExtrasDiscovery()
     {
         var vehicle = new DebugExtrasFixture();
         var tracker = new DebugExtraTracker();
-        int[] mapped = { 220, -1, -1, -1 };
+        int[] mapped = { 12, -1, -1, -1 };
         int[] enabled = tracker.Refresh(vehicle, mapped);
-        Check(enabled.SequenceEqual(new[] { 0, 220 }), "DEBUG missed a native active extra or a high mapped ID.");
+        Check(enabled.SequenceEqual(new[] { 0, 12 }), "DEBUG missed a native active extra or the highest assignable extra.");
         Check(vehicle.ExistenceQueries <= 20 && tracker.IsScanning, "DEBUG scanned all IDs in the first frame.");
         vehicle.SetEnabled(5, true);
         for (int i = 0; i < 15; i++)
@@ -633,10 +704,10 @@ internal static class RegressionTests
             enabled = tracker.Refresh(vehicle, mapped);
             Check(vehicle.ExistenceQueries - before <= 20, "Extra discovery exceeded its refresh budget.");
         }
-        Check(!tracker.IsScanning && enabled.SequenceEqual(new[] { 0, 5, 220 }), "Progressive extra discovery failed to finish or missed a state change.");
+        Check(!tracker.IsScanning && enabled.SequenceEqual(new[] { 0, 5, 12, 220 }), "Progressive extra discovery failed to finish or missed an unmapped native extra.");
         vehicle.SetEnabled(220, false);
         enabled = tracker.Refresh(vehicle, mapped);
-        Check(enabled.SequenceEqual(new[] { 0, 5 }) && tracker.Exists(220), "DEBUG confused a disabled extra with a missing extra.");
+        Check(enabled.SequenceEqual(new[] { 0, 5, 12 }) && tracker.Exists(220), "DEBUG confused a disabled extra with a missing extra.");
         var replacement = new DebugExtrasFixture();
         replacement.Values.Clear(); replacement.Values[2] = true;
         enabled = new DebugExtraTracker().Refresh(replacement, new[] { -1, -1, -1, -1 });
@@ -658,16 +729,20 @@ internal static class RegressionTests
                 new DebugVoiceState { Name = "Manual", Status = "OFF", Sound = "None" },
                 new DebugVoiceState { Name = "FIAMMS", Status = "LOADING", Sound = new string('x', 200) + ".wav" }
             },
-            MappedExtras = new[] { 0, 3, -1, 250 },
+            MappedExtras = new[] { 1, 3, -1, 12 },
             MappedExists = new[] { true, true, false, false },
             MappedEnabled = new[] { true, false, false, false },
-            EnabledExtras = new[] { 0, 5, 6, 7, 200 }, ScanningExtras = false
+            EnabledExtras = new[] { 1, 5, 6, 7, 200 }, ScanningExtras = false
         };
         string text = DebugText.Build(state);
         Check(text.Contains("Vehicle: POLICE") && text.Contains("Tone6: PLAYING") && text.Contains("Audio: PAUSED"), "DEBUG omitted the current vehicle, tone or pause state.");
         Check(text.Contains("Rumbler: ON") && text.Contains("FIAMMS toggle: ON") && text.Contains("FIAMMS: LOADING"), "DEBUG omitted feature or loading states.");
-        Check(text.Contains("Red beacon: extra 0: ON") && text.Contains("Matrix text 1: extra 3: OFF") && text.Contains("Matrix text 2: UNASSIGNED") && text.Contains("Matrix text 3: extra 250: MISSING"), "DEBUG extra labels did not reflect mapped native states.");
-        Check(text.Contains("All enabled extras: 0, 5-7, 200"), "DEBUG omitted enabled extras outside the four mappings.");
+        Check(text.Contains("Horn interrupts siren: OFF"), "DEBUG omitted the vehicle's interruption setting.");
+        Check(text.Contains("Red beacon: extra 1: ON") && text.Contains("Matrix text 1: extra 3: OFF") && text.Contains("Matrix text 2: UNASSIGNED") && text.Contains("Matrix text 3: extra 12: MISSING"), "DEBUG extra labels did not reflect mapped native states.");
+        Check(text.Contains("All enabled extras: 1, 5-7, 200"), "DEBUG omitted enabled extras outside the four mappings.");
+        DebugLine[] lines = DebugText.BuildLines(state);
+        Check(lines.Any(line => line.Text == "AUDIO" && line.Bold) && lines.Any(line => line.Text == "CONTROLS" && line.Bold) && lines.Any(line => line.Text == "VEHICLE & EXTRAS" && line.Bold), "DEBUG omitted section headings.");
+        Check(lines.Single(line => line.Text == "Tone6: PLAYING").Tone == DebugTone.Active && lines.Single(line => line.Text == "FIAMMS: LOADING").Tone == DebugTone.Warning && lines.Single(line => line.Text == "Matrix text 3: extra 12: MISSING").Tone == DebugTone.Error, "DEBUG did not distinguish active, loading and missing states.");
         Check(text.Split(new[] { Environment.NewLine }, StringSplitOptions.None).All(line => line.Length <= 64), "A long WAV filename overflowed the DEBUG text column.");
         Check(DebugText.Build(null) == string.Empty, "A missing current vehicle produced visible debug text.");
     }
@@ -698,7 +773,7 @@ internal static class RegressionTests
 
     private sealed class DebugExtrasFixture : IVehicleExtras
     {
-        internal readonly System.Collections.Generic.Dictionary<int, bool> Values = new System.Collections.Generic.Dictionary<int, bool> { { 0, true }, { 5, false }, { 220, true } };
+        internal readonly System.Collections.Generic.Dictionary<int, bool> Values = new System.Collections.Generic.Dictionary<int, bool> { { 0, true }, { 5, false }, { 12, true }, { 220, true } };
         internal int ExistenceQueries;
         public bool Exists(int id) { ExistenceQueries++; return Values.ContainsKey(id); }
         public bool IsEnabled(int id) => Values[id];
@@ -707,7 +782,7 @@ internal static class RegressionTests
 
     private sealed class FakeExtras : IVehicleExtras
     {
-        private readonly System.Collections.Generic.Dictionary<int, bool> values = new System.Collections.Generic.Dictionary<int, bool> { { 0, false }, { 3, false }, { 4, false }, { 5, false } };
+        private readonly System.Collections.Generic.Dictionary<int, bool> values = new System.Collections.Generic.Dictionary<int, bool> { { 0, false }, { 1, false }, { 3, false }, { 4, false }, { 12, false }, { 13, false } };
         internal int Writes;
         public bool Exists(int id) => values.ContainsKey(id);
         public bool IsEnabled(int id) => values[id];

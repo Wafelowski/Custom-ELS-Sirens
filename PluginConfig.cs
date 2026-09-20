@@ -2,6 +2,7 @@ using Rage;
 using System;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Windows.Forms;
 
 namespace CustomELSSirens
@@ -12,6 +13,7 @@ namespace CustomELSSirens
         public static string WavFolder = BaseFolder + @"WAVs\";
         public static string ProfilesFolder = BaseFolder + @"Profiles\";
         public static string ConfigFile = BaseFolder + "Config.ini";
+        internal const string KeybindOptionsUrl = "https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.keys?view=windowsdesktop-10.0#fields";
 
         public static Keys MenuKey = Keys.F10;
         public static Keys Sound_Manul = (Keys)82;
@@ -20,15 +22,15 @@ namespace CustomELSSirens
         public static Keys Snd_SrnTon3 = (Keys)51;
         public static Keys Snd_SrnTon4 = (Keys)52;
         // Keep the tone keys introduced in 1.9 compatible with existing configs.
-        public static Keys Snd_SrnTon5 = Keys.D5;
-        public static Keys Snd_SrnTon6 = Keys.D6;
-        public static Keys Toggle_Rumbler = Keys.D9;
-        public static Keys Toggle_FIAMMS = Keys.D0;
+        public static Keys Snd_SrnTon5 = Keys.D8;
+        public static Keys Snd_SrnTon6 = Keys.D9;
+        public static Keys Toggle_Rumbler = Keys.F11;
+        public static Keys Toggle_FIAMMS = Keys.F9;
         public static Keys Toggle_RedBeacon = Keys.None;
         public static Keys Toggle_MatrixText1 = Keys.None;
         public static Keys Toggle_MatrixText2 = Keys.None;
         public static Keys Toggle_MatrixText3 = Keys.None;
-        public static Keys Snd_SrnTonX = Keys.D8;
+        public static Keys Snd_SrnTonX = (Keys)54;
         public static Keys Toggle_Lsts = Keys.J;
 
         public static bool EnableControllerSupport = true;
@@ -40,7 +42,6 @@ namespace CustomELSSirens
         public static bool EnableLightStageTracking = false;
         public static int CustomLightStageAmount = 3;
         public static bool SirenLightRestriction = true;
-        public static bool HornInterruptsSiren = true;
         public static bool Debug = false;
         public static float MasterVolume = 0.5f;
         public static bool AutomaticAiSirenCutoff = true;
@@ -90,7 +91,6 @@ namespace CustomELSSirens
                 ReverbIntensity = ReadFloat(ini, "Settings", "ReverbIntensity", ReverbIntensity);
                 EnableControllerSupport = ini.ReadBoolean("Settings", "EnableControllerSupport", EnableControllerSupport);
                 SirenLightRestriction = ini.ReadBoolean("Settings", "SirenLightRestriction", SirenLightRestriction);
-                HornInterruptsSiren = ini.ReadBoolean("Settings", "HornInterruptsSiren", HornInterruptsSiren);
                 Debug = ini.ReadBoolean("Settings", "Debug", Debug);
 
                 MenuKey = ini.ReadEnum("Keybinds", "MenuKey", ini.ReadEnum("Settings", "MenuKey", MenuKey));
@@ -129,6 +129,39 @@ namespace CustomELSSirens
             }
             Validate();
             if (UseElsKeybinds) LoadELSKeybinds();
+            EnsureKeybindComment(ConfigFile);
+        }
+
+        // Only called when loading/saving configuration, never during playback.
+        // Insert after the BOM without re-encoding any existing INI bytes.
+        internal static void EnsureKeybindComment(string path)
+        {
+            try
+            {
+                byte[] original = File.ReadAllBytes(path);
+                string contents;
+                Encoding encoding;
+                using (var reader = new StreamReader(new MemoryStream(original), Encoding.UTF8, true))
+                {
+                    contents = reader.ReadToEnd();
+                    encoding = reader.CurrentEncoding;
+                }
+                if (contents.Contains(KeybindOptionsUrl)) return;
+                string newline = contents.Contains("\r\n") ? "\r\n" : contents.Contains("\n") ? "\n" : Environment.NewLine;
+                byte[] comment = encoding.GetBytes("; Keybind options (Windows Forms Keys): " + KeybindOptionsUrl + newline);
+                byte[] preamble = encoding.GetPreamble();
+                bool hasPreamble = original.Length >= preamble.Length;
+                for (int i = 0; hasPreamble && i < preamble.Length; i++)
+                    hasPreamble = original[i] == preamble[i];
+                int offset = hasPreamble ? preamble.Length : 0;
+                var updated = new byte[original.Length + comment.Length];
+                Buffer.BlockCopy(original, 0, updated, 0, offset);
+                Buffer.BlockCopy(comment, 0, updated, offset, comment.Length);
+                Buffer.BlockCopy(original, offset, updated, offset + comment.Length, original.Length - offset);
+                File.WriteAllBytes(path, updated);
+            }
+            catch (IOException ex) { Game.Console.Print("[CustomSirens] Could not add keybind help to " + path + ": " + ex.Message); }
+            catch (UnauthorizedAccessException ex) { Game.Console.Print("[CustomSirens] Could not add keybind help to " + path + ": " + ex.Message); }
         }
 
         public static float ReadFloat(InitializationFile ini, string section, string key, float fallback)
@@ -169,6 +202,19 @@ namespace CustomELSSirens
                 case "ManualVol": return ManualVol;
                 case "FIAMMSVol": return FIAMMSVol;
                 default: return 1f;
+            }
+        }
+
+        // Feature bindings are global. Vehicle profiles only assign extra IDs.
+        internal static Keys GetExtraKey(int action)
+        {
+            switch (action)
+            {
+                case 0: return Toggle_RedBeacon;
+                case 1: return Toggle_MatrixText1;
+                case 2: return Toggle_MatrixText2;
+                case 3: return Toggle_MatrixText3;
+                default: return Keys.None;
             }
         }
 
@@ -234,7 +280,6 @@ namespace CustomELSSirens
             ini.Write("Settings", "CustomLightStageAmount", CustomLightStageAmount.ToString());
             ini.Write("Settings", "EnableControllerSupport", EnableControllerSupport.ToString());
             ini.Write("Settings", "SirenLightRestriction", SirenLightRestriction.ToString());
-            ini.Write("Settings", "HornInterruptsSiren", HornInterruptsSiren.ToString());
             ini.Write("Settings", "Debug", Debug.ToString());
             ini.Write("Settings", "MasterVolume", MasterVolume.ToString(CultureInfo.InvariantCulture));
             ini.Write("Settings", "AutomaticAiSirenCutoff", AutomaticAiSirenCutoff.ToString());
@@ -265,6 +310,7 @@ namespace CustomELSSirens
             ini.Write("Keybinds", "Controller_Manul", Controller_Manul.ToString());
             ini.Write("Keybinds", "Controller_SrnToggle", Controller_SrnToggle.ToString());
             ini.Write("Keybinds", "Controller_SrnTonX", Controller_SrnTonX.ToString());
+            EnsureKeybindComment(ConfigFile);
         }
     }
 }

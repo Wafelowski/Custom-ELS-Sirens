@@ -1,3 +1,21 @@
+# 1.12.0
+
+## Extra assignments, global feature keys and DEBUG readability
+
+- Restricted beacon/matrix assignments to 1-12. Menu selectors offer Disabled plus those twelve IDs; omitted/-1 values stay disabled. Invalid legacy IDs, including 0 and 13+, are disabled without touching another extra. Duplicate and missing-extra protections remain.
+- Removed feature key fields and keybind INI reads from vehicle/global profiles. Rumbler, FIAMMS, beacon and matrix input now uses Config.ini exclusively. Save Profile stops writing these bindings; legacy profile entries are ignored.
+- Added typed DEBUG text styles, cyan section headings, green active states, gray inactive states, amber loading/interruption states, red errors, lavender configuration details and muted WAV filenames. Added bold emphasis with the existing text API and increased panel contrast. Layout caching includes style changes and measures the emphasis width; the renderer still uses immutable snapshots only.
+- Kept DEBUG discovery of actual native extras independent of the 1-12 assignment range. Updated boundary, global-key reload and DEBUG coverage (28 regression checks total), examples and instructions. Syntax and project paths checked; compilation, test execution and in-game rendering remain unverified here.
+
+# 1.11.1.0
+
+## Vehicle horn interruption and keybind help
+
+- Moved Horn Interrupts Siren beside Horn Cycles Siren in the Vehicle Specific profile editor. Save Profile persists each model's choice; both controls are disabled in Global Default mode.
+- Playback and DEBUG now read the cached vehicle profile's interruption setting. Missing values default to true, and old Config.ini/Global.ini interruption entries are ignored. Silent horn cycling still changes tone immediately without interruption.
+- Added the requested Windows Forms Keys reference URL as an INI comment in generated/loaded Config.ini files, saved profiles, and both examples. Comment insertion preserves existing file bytes, encoding and line endings and skips duplicate insertion.
+- Extended horn-profile isolation/reload coverage and added an encoding-preservation regression check (27 checks total). C# syntax and project paths checked; compilation, regression execution and in-game testing remain unverified in this environment.
+
 # 1.11.0.0
 
 ## Per-vehicle horn routing and DEBUG
